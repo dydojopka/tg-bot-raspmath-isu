@@ -18,6 +18,45 @@ chrome_options = webdriver.ChromeOptions()
 chrome_options.add_argument("--headless")  # Скрытое открытие браузера
 driver = webdriver.Chrome(options=chrome_options)
 
+# Словарь для кратких номеров групп: {краткий_номер: (полное_название, url_num)}
+short_group_map = {
+    # Курс 1
+    "2121": ("02121-ДБ", 1),
+    "2122": ("02122-ДБ", 2),
+    "2123": ("02123-ДБ", 3),
+    "2141": ("02141-ДБ", 4),
+    "2161": ("02161-ДБ", 5),
+    "2162": ("02162-ДБ", 6),
+    "2171": ("02171-ДБ", 7),
+    "2172": ("02172-ДБ", 8),
+    "2181": ("02181-ДБ", 9),
+    # Курс 2
+    "2221": ("02221-ДБ", 10),
+    "2222": ("02222-ДБ", 11),
+    "2223": ("02223-ДБ", 12),
+    "2241": ("02241-ДБ", 13),
+    "2261": ("02261-ДБ", 14),
+    "2262": ("02262-ДБ", 15),
+    "2271": ("02271-ДБ", 16),
+    "2272": ("02272-ДБ", 17),
+    "2281": ("02281-ДБ", 18),
+    # Курс 3
+    "2321": ("02321-ДБ", 19),
+    "2322": ("02322-ДБ", 20),
+    "2323": ("02323-ДБ", 21),
+    "2341": ("02341-ДБ", 22),
+    "2361": ("02361-ДБ", 23),
+    "2362": ("02362-ДБ", 24),
+    "2371": ("02371-ДБ", 25),
+    "2381": ("02381-ДБ", 26),
+    # Курс 4
+    "2421": ("02421-ДБ", 27),
+    "2422": ("02422-ДБ", 28),
+    "2441": ("02441-ДБ", 29),
+    "2461": ("02461-ДБ", 30),
+    "2471": ("02471-ДБ", 31),
+}
+
 @bot.message_handler(commands=['start'])
 def button_message(message):
     markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -94,151 +133,35 @@ def parsing(message, url_num): # это база
 
 @bot.message_handler(content_types='text')
 def message_reply(message):
-    global url_num
-    if message.text=="Курс 1": # группы 1го курса
-        markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02121-ДБ")
-        g2 = types.KeyboardButton("02122-ДБ")
-        g3 = types.KeyboardButton("02123-ДБ")
-        g4 = types.KeyboardButton("02141-ДБ")
-        g5 = types.KeyboardButton("02161-ДБ")
-        g6 = types.KeyboardButton("02162-ДБ")
-        g7 = types.KeyboardButton("02171-ДБ")
-        g8 = types.KeyboardButton("02172-ДБ")
-        g9 = types.KeyboardButton("02181-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7 ,g8, g9)
-        bot.send_message(message.chat.id,'Выбери группу',reply_markup=markup)
+    user_input = message.text.strip().lower()
+    
+    # Обработка выбора курса (игнорируем регистр и пробелы)
+    if user_input in ["курс 1", "курс1"]:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        # ... (добавление кнопок для курса 1)
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+    elif user_input in ["курс 2", "курс2"]:
+        # ... (добавление кнопок для курса 2)
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+    elif user_input in ["курс 3", "курс3"]:
+        # ... (добавление кнопок для курса 3)
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+    elif user_input in ["курс 4", "курс4"]:
+        # ... (добавление кнопок для курса 4)
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+    
+    # Проверка на краткий номер группы (например, "2271")
+    elif message.text in short_group_map:
+        full_name, url_num = short_group_map[message.text]
+        parsing(message, url_num)
+    
+    # Проверка полного названия группы (игнорируем регистр)
+    else:
+        input_upper = message.text.upper()
+        for short, (full, url_num) in short_group_map.items():
+            if full.upper() == input_upper:
+                parsing(message, url_num)
+                return
+        bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз.")
 
-    elif message.text == "02121-ДБ":
-        parsing(message, 1)
-       
-    elif message.text == "02122-ДБ":
-        parsing(message, 2)
-
-    elif message.text == "02123-ДБ":
-        parsing(message, 3)
-
-    elif message.text == "02141-ДБ":
-        parsing(message, 4)
-
-    elif message.text == "02161-ДБ":
-        parsing(message, 5)
-
-    elif message.text == "02162-ДБ":
-        parsing(message, 6)
-
-    elif message.text == "02171-ДБ":
-        parsing(message, 7)
-
-    elif message.text == "02172-ДБ":
-        parsing(message, 8)
-
-    elif message.text == "02181-ДБ":
-        parsing(message, 9)
-
-
-    if message.text=="Курс 2": # группы 2го курса
-        markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02221-ДБ")
-        g2 = types.KeyboardButton("02222-ДБ")
-        g3 = types.KeyboardButton("02223-ДБ")
-        g4 = types.KeyboardButton("02241-ДБ")
-        g5 = types.KeyboardButton("02261-ДБ")
-        g6 = types.KeyboardButton("02262-ДБ")
-        g7 = types.KeyboardButton("02271-ДБ")
-        g8 = types.KeyboardButton("02272-ДБ")
-        g9 = types.KeyboardButton("02281-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7 ,g8, g9)
-        bot.send_message(message.chat.id,'Выбери группу',reply_markup=markup)
-
-    elif message.text == "02221-ДБ":
-        parsing(message, 10)
-
-    elif message.text == "02222-ДБ":
-        parsing(message, 11)
-
-    elif message.text == "02223-ДБ":
-        parsing(message, 12)
-
-    elif message.text == "02241-ДБ":
-        parsing(message, 13)
-
-    elif message.text == "02261-ДБ":
-        parsing(message, 14)
-
-    elif message.text == "02262-ДБ":
-        parsing(message, 15)
-
-    elif message.text == "02271-ДБ":
-        parsing(message, 16)
-
-    elif message.text == "02272-ДБ":
-        parsing(message, 17)
-
-    elif message.text == "02281-ДБ":
-        parsing(message, 18)
-
-
-    if message.text=="Курс 3": # группы 3го курса
-        markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02321-ДБ")
-        g2 = types.KeyboardButton("02322-ДБ")
-        g3 = types.KeyboardButton("02323-ДБ")
-        g4 = types.KeyboardButton("02341-ДБ")
-        g5 = types.KeyboardButton("02361-ДБ")
-        g6 = types.KeyboardButton("02362-ДБ")
-        g7 = types.KeyboardButton("02371-ДБ")
-        g8 = types.KeyboardButton("02381-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7 ,g8)
-        bot.send_message(message.chat.id,'Выбери группу',reply_markup=markup)
-
-    elif message.text == "02321-ДБ":
-        parsing(message, 19)
-
-    elif message.text == "02322-ДБ":
-        parsing(message, 20)
-
-    elif message.text == "02323-ДБ":
-        parsing(message, 21)
-
-    elif message.text == "02341-ДБ":
-        parsing(message, 22)
-
-    elif message.text == "02361-ДБ":
-        parsing(message, 23)
-
-    elif message.text == "02362-ДБ":
-        parsing(message, 24)
-
-    elif message.text == "02371-ДБ":
-        parsing(message, 25)
-
-    elif message.text == "02381-ДБ":
-        parsing(message, 26)
-
-
-    if message.text=="Курс 4": # группы 4го курса
-        markup=types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02421-ДБ")
-        g2 = types.KeyboardButton("02422-ДБ")
-        g3 = types.KeyboardButton("02441-ДБ")
-        g4 = types.KeyboardButton("02461-ДБ")
-        g5 = types.KeyboardButton("02471-ДБ")
-        markup.add(g1, g2, g3, g4, g5)
-        bot.send_message(message.chat.id,'Выбери группу',reply_markup=markup)
-
-    elif message.text == "02421-ДБ":
-        parsing(message, 27)
-
-    elif message.text == "02422-ДБ":
-        parsing(message, 28)
-
-    elif message.text == "02441-ДБ":
-        parsing(message, 29)
-
-    elif message.text == "02461-ДБ":
-        parsing(message, 30)
-
-    elif message.text == "02471-ДБ":
-        parsing(message, 31)
 bot.infinity_polling()
