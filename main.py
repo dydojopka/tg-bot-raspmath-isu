@@ -3,19 +3,28 @@ import os
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
-from datetime import date
-import datetime
+from datetime import date, datetime
 import telebot
 from telebot import types
+import sqlite3
+import threading
+import time
 
 load_dotenv()
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
 bot = telebot.TeleBot(TOKEN)
 
+# Инициализация драйвера Chrome
 ChromeDriverManager().install()
 chrome_options = webdriver.ChromeOptions()
 chrome_options.add_argument("--headless")
+chrome_options.add_argument("--disable-gpu")
+chrome_options.add_argument("--no-sandbox")
+chrome_options.add_argument("--disable-dev-shm-usage")
 driver = webdriver.Chrome(options=chrome_options)
+
+# Блокировка для безопасной работы с драйвером в потоках
+driver_lock = threading.Lock()
 
 # Словарь для кратких номеров групп: {краткий_номер: (полное_название, url_num)}
 short_group_map = {
@@ -57,6 +66,183 @@ short_group_map = {
     "2481": ("02481-ДБ", 50),
 }
 
+# Создание и инициализация базы данных
+def init_db():
+    conn = sqlite3.connect('schedule.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS schedule (
+            id INTEGER PRIMARY KEY,
+            group_name TEXT NOT NULL,
+            week_type TEXT NOT NULL,
+            day INTEGER NOT NULL,
+            lesson_number INTEGER NOT NULL,
+            subject TEXT,
+            teacher TEXT,
+            classroom TEXT,
+            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(group_name, week_type, day, lesson_number)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Функция для сохранения расписания в базу данных
+def save_schedule_to_db(group_name, week_type, schedule_data):
+    conn = sqlite3.connect('schedule.db')
+    cursor = conn.cursor()
+    try:
+        # Удаляем старые записи для этой группы и недели
+        cursor.execute("DELETE FROM schedule WHERE group_name = ? AND week_type = ?", 
+                      (group_name, week_type))
+        
+        # Вставляем новые данные
+        for day in range(6):  # Пн-Сб
+            for lesson_num in range(7):  # 7 пар в день
+                idx = lesson_num * 6 + day
+                if idx < len(schedule_data['subject']):
+                    subject = schedule_data['subject'][idx]
+                    teacher = schedule_data['teacher'][idx]
+                    classroom = schedule_data['clr'][idx]
+                    
+                    # Преобразуем "-----" в None для базы данных
+                    subject = None if subject == '-----' else subject
+                    teacher = None if teacher == '-----' else teacher
+                    classroom = None if classroom == '-----' else classroom
+                    
+                    cursor.execute('''
+                        INSERT INTO schedule 
+                        (group_name, week_type, day, lesson_number, subject, teacher, classroom) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?)
+                    ''', (group_name, week_type, day, lesson_num, subject, teacher, classroom))
+        conn.commit()
+    finally:
+        conn.close()
+
+# Функция для получения расписания из базы данных
+def get_schedule_from_db(group_name, day):
+    conn = sqlite3.connect('schedule.db')
+    cursor = conn.cursor()
+    try:
+        # Получаем последнее доступное расписание для группы
+        cursor.execute('''
+            SELECT subject, teacher, classroom 
+            FROM schedule 
+            WHERE group_name = ? AND day = ?
+            ORDER BY lesson_number
+        ''', (group_name, day))
+        
+        results = cursor.fetchall()
+        if results:
+            # Преобразуем результаты в формат, совместимый с текущей логикой
+            subject = []
+            teacher = []
+            classroom = []
+            for subj, teach, clrm in results:
+                subject.append(subj if subj is not None else '-----')
+                teacher.append(teach if teach is not None else '-----')
+                classroom.append(clrm if clrm is not None else '-----')
+            return {'subject': subject, 'teacher': teacher, 'clr': classroom}
+        return None
+    finally:
+        conn.close()
+
+# Функция парсинга с сохранением в базу данных
+def parse_and_save_schedule(url_num, group_name):
+    print(f"{datetime.now().time()} - Парсинг для: {group_name}")
+    
+    data = {
+        'subject': [],
+        'teacher': [],
+        'clr': [],
+    }
+    top_week = True
+
+    try:
+        with driver_lock:
+            driver.get(f"https://raspmath.isu.ru/schedule/{url_num}")
+            soup = BeautifulSoup(driver.page_source, 'lxml')
+
+        # Определение текущей недели
+        active_li = soup.find('li', class_='active mr-3')
+        if active_li and active_li.find('a', class_="btn btn-primary2 top-week active"):
+            top_week = True
+            week_type = 'top'
+        else:
+            top_week = False
+            week_type = 'bottom'
+
+        tbody = soup.find('tbody')
+        if not tbody:
+            print(f"Не найдено расписание для группы: {group_name}")
+            return None
+
+        if top_week:
+            td_list = tbody.find_all('td', class_='td1')
+        else:
+            td_list = tbody.find_all('td', class_='td2')
+
+        for td in td_list:
+            if len(td) == 0:
+                data['subject'].append('-----')
+                data['teacher'].append('-----')
+                data['clr'].append('-----')
+            else:
+                if td.find('p', class_='nameHoliday h5 text-center'): 
+                    data['subject'].append('-----')
+                    data['teacher'].append('-----')
+                    data['clr'].append('-----')
+                else:
+                    subject_el = td.find('div', class_='nameSubject')
+                    subject = subject_el.text.strip() if subject_el else '-----'
+                    data['subject'].append(subject)
+                    
+                    teacher_el = td.find('div', class_='teacher sch-mt-1')
+                    teacher = teacher_el.text.strip() if teacher_el else '-----'
+                    data['teacher'].append(teacher)
+                    
+                    clr_el = td.find('div', class_='classroom sch-mt-1')
+                    classroom = clr_el.text.strip() if clr_el else '-----'
+                    data['clr'].append(classroom)
+
+        # Сохраняем в базу данных
+        save_schedule_to_db(group_name, week_type, data)
+        return data
+    except Exception as e:
+        print(f"Ошибка при парсинге для {group_name}: {str(e)}")
+        return None
+    
+# Функция для получения расписания (из базы или парсинга)
+def get_schedule(group_name, url_num):
+    # Пытаемся получить данные из базы
+    day = date.today().weekday()
+    schedule_data = get_schedule_from_db(group_name, day)
+    
+    # Если данных нет - парсим и сохраняем
+    if not schedule_data:
+        schedule_data = parse_and_save_schedule(url_num, group_name)
+    
+    return schedule_data
+
+# Функция для фонового обновления базы данных
+def update_database():
+    while True:
+        print(f"{datetime.now()} - Начало обновления базы данных")
+        for group_short, (group_name, url_num) in short_group_map.items():
+            try:
+                print(f"Обновление для группы: {group_name}")
+                parse_and_save_schedule(url_num, group_name)
+                time.sleep(2)  # Пауза между запросами
+            except Exception as e:
+                print(f"Ошибка при обновлении группы {group_name}: {str(e)}")
+        
+        print(f"{datetime.now()} - Обновление завершено")
+        time.sleep(600)  # 10 минут
+
+# Запуск фонового потока для обновления базы
+update_thread = threading.Thread(target=update_database, daemon=True)
+update_thread.start()
+
 @bot.message_handler(commands=['start'])
 def button_message(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -70,65 +256,30 @@ def button_message(message):
     markup.add(c4)
     bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться к выбору курса отправь /start', reply_markup=markup)
 
-def parsing(message, url_num):
-    print(f"{datetime.datetime.now().time()} - Запрос от: {message.from_user.username}")
-
-    subject = []
-    teacher = []
-    clr = []
-    top_week = True
-
-    driver.get(f"https://raspmath.isu.ru/schedule/{url_num}") 
-    soup = BeautifulSoup(driver.page_source, 'lxml')
-
-    group = soup.find('span', {'class': 'select2-selection__rendered'}).text[1:]
-
-    if  soup.find('a', class_="btn btn-primary2 top-week active") in soup.find('li', class_='active mr-3'):
-        top_week = True
-    else:
-        top_week = False
-
-    tbody = soup.find('tbody')
-
-    if top_week == True:
-        td_list = tbody.find_all('td', class_='td1')
-    else:
-        td_list = tbody.find_all('td', class_='td2')
-
-    for td in td_list:
-        if len(td) == 0:
-            subject.append('-----')
-            teacher.append('-----')
-            clr.append('-----')
-        else:
-            if td.find('p', class_='nameHoliday h5 text-center'): 
-                subject.append('-----')
-                teacher.append('-----')
-                clr.append('-----')
-            else:
-                subject_el = td.find('div', class_ = 'nameSubject').text
-                subject.append(subject_el)
-                teacher_el = td.find('div', class_ = 'teacher sch-mt-1').text
-                teacher.append(teacher_el)
-                clr_el = td.find('div', class_ = 'classroom sch-mt-1').text
-                clr.append(clr_el)
-
+def send_schedule(message, schedule_data, group_name):
     tday = date.today().weekday()
-    day = soup.find('th', class_ = tday+1).text
+    days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    day_name = days[tday]
+    
     if tday == 6:
         bot.send_message(message.chat.id, "Сегодня воскресенье")
-    elif tday == 0:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[0]}\n    ⌊👤{teacher[0]}\n    ⌊🚪{clr[0]}\n⌚10.10-11.40:\n    ⌊📖{subject[6]}\n    ⌊👤{teacher[6]}\n    ⌊🚪{clr[6]}\n⌚11.50-13.20:\n    ⌊📖{subject[12]}\n    ⌊👤{teacher[12]}\n    ⌊🚪{clr[12]}\n⌚13.50-15.20:\n    ⌊📖{subject[18]}\n    ⌊👤{teacher[18]}\n    ⌊🚪{clr[18]}\n⌚15.30-17.00:\n    ⌊📖{subject[24]}\n    ⌊👤{teacher[24]}\n    ⌊🚪{clr[24]}\n⌚17.10-18.40:\n    ⌊📖{subject[30]}\n    ⌊👤{teacher[30]}\n    ⌊🚪{clr[30]}\n⌚18.50-20.20:\n    ⌊📖{subject[36]}\n    ⌊👤{teacher[36]}\n    ⌊🚪{clr[36]}")
-    elif tday == 1:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[1]}\n    ⌊👤{teacher[1]}\n    ⌊🚪{clr[1]}\n⌚10.10-11.40:\n    ⌊📖{subject[7]}\n    ⌊👤{teacher[7]}\n    ⌊🚪{clr[7]}\n⌚11.50-13.20:\n    ⌊📖{subject[13]}\n    ⌊👤{teacher[13]}\n    ⌊🚪{clr[13]}\n⌚13.50-15.20:\n    ⌊📖{subject[19]}\n    ⌊👤{teacher[19]}\n    ⌊🚪{clr[19]}\n⌚15.30-17.00:\n    ⌊📖{subject[25]}\n    ⌊👤{teacher[25]}\n    ⌊🚪{clr[25]}\n⌚17.10-18.40:\n    ⌊📖{subject[31]}\n    ⌊👤{teacher[31]}\n    ⌊🚪{clr[31]}\n⌚18.50-20.20:\n    ⌊📖{subject[37]}\n    ⌊👤{teacher[37]}\n    ⌊🚪{clr[37]}")
-    elif tday == 2:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[2]}\n    ⌊👤{teacher[2]}\n    ⌊🚪{clr[2]}\n⌚10.10-11.40:\n    ⌊📖{subject[8]}\n    ⌊👤{teacher[8]}\n    ⌊🚪{clr[8]}\n⌚11.50-13.20:\n    ⌊📖{subject[14]}\n    ⌊👤{teacher[14]}\n    ⌊🚪{clr[14]}\n⌚13.50-15.20:\n    ⌊📖{subject[20]}\n    ⌊👤{teacher[20]}\n    ⌊🚪{clr[20]}\n⌚15.30-17.00:\n    ⌊📖{subject[26]}\n    ⌊👤{teacher[26]}\n    ⌊🚪{clr[26]}\n⌚17.10-18.40:\n    ⌊📖{subject[32]}\n    ⌊👤{teacher[32]}\n    ⌊🚪{clr[32]}\n⌚18.50-20.20:\n    ⌊📖{subject[38]}\n    ⌊👤{teacher[38]}\n    ⌊🚪{clr[38]}")
-    elif tday == 3:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[3]}\n    ⌊👤{teacher[3]}\n    ⌊🚪{clr[3]}\n⌚10.10-11.40:\n    ⌊📖{subject[9]}\n    ⌊👤{teacher[9]}\n    ⌊🚪{clr[9]}\n⌚11.50-13.20:\n    ⌊📖{subject[15]}\n    ⌊👤{teacher[15]}\n    ⌊🚪{clr[15]}\n⌚13.50-15.20:\n    ⌊📖{subject[21]}\n    ⌊👤{teacher[21]}\n    ⌊🚪{clr[21]}\n⌚15.30-17.00:\n    ⌊📖{subject[27]}\n    ⌊👤{teacher[27]}\n    ⌊🚪{clr[27]}\n⌚17.10-18.40:\n    ⌊📖{subject[33]}\n    ⌊👤{teacher[33]}\n    ⌊🚪{clr[33]}\n⌚18.50-20.20:\n    ⌊📖{subject[39]}\n    ⌊👤{teacher[39]}\n    ⌊🚪{clr[39]}")
-    elif tday == 4:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[4]}\n    ⌊👤{teacher[4]}\n    ⌊🚪{clr[4]}\n⌚10.10-11.40:\n    ⌊📖{subject[10]}\n    ⌊👤{teacher[10]}\n    ⌊🚪{clr[10]}\n⌚11.50-13.20:\n    ⌊📖{subject[16]}\n    ⌊👤{teacher[16]}\n    ⌊🚪{clr[16]}\n⌚13.50-15.20:\n    ⌊📖{subject[22]}\n    ⌊👤{teacher[22]}\n    ⌊🚪{clr[22]}\n⌚15.30-17.00:\n    ⌊📖{subject[28]}\n    ⌊👤{teacher[28]}\n    ⌊🚪{clr[28]}\n⌚17.10-18.40:\n    ⌊📖{subject[34]}\n    ⌊👤{teacher[34]}\n    ⌊🚪{clr[34]}\n⌚18.50-20.20:\n    ⌊📖{subject[40]}\n    ⌊👤{teacher[40]}\n    ⌊🚪{clr[40]}")
-    elif tday == 5:
-        bot.send_message(message.chat.id, f"🗓️{day} - {group}\n⌚08.30-10.00:\n    ⌊📖{subject[5]}\n    ⌊👤{teacher[5]}\n    ⌊🚪{clr[5]}\n⌚10.10-11.40:\n    ⌊📖{subject[11]}\n    ⌊👤{teacher[11]}\n    ⌊🚪{clr[11]}\n⌚11.50-13.20:\n    ⌊📖{subject[17]}\n    ⌊👤{teacher[17]}\n    ⌊🚪{clr[17]}\n⌚13.50-15.20:\n    ⌊📖{subject[23]}\n    ⌊👤{teacher[23]}\n    ⌊🚪{clr[23]}\n⌚15.30-17.00:\n    ⌊📖{subject[29]}\n    ⌊👤{teacher[29]}\n    ⌊🚪{clr[29]}\n⌚17.10-18.40:\n    ⌊📖{subject[35]}\n    ⌊👤{teacher[35]}\n    ⌊🚪{clr[35]}\n⌚18.50-20.20:\n    ⌊📖{subject[41]}\n    ⌊👤{teacher[41]}\n    ⌊🚪{clr[41]}")
+    else:
+        lesson_times = [
+            "08.30-10.00", "10.10-11.40", "11.50-13.20", 
+            "13.50-15.20", "15.30-17.00", "17.10-18.40", "18.50-20.20"
+        ]
+        
+        msg = f"🗓️{day_name} - {group_name}\n"
+        # Просто перебираем все пары для текущего дня (их 7)
+        for i in range(7):
+            if i < len(schedule_data['subject']):
+                subject = schedule_data['subject'][i] or '-----'
+                teacher = schedule_data['teacher'][i] or '-----'
+                classroom = schedule_data['clr'][i] or '-----'
+                
+                msg += f"⌚{lesson_times[i]}:\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+        
+        bot.send_message(message.chat.id, msg)
 
 @bot.message_handler(content_types='text')
 def message_reply(message):
@@ -184,26 +335,34 @@ def message_reply(message):
         g3 = types.KeyboardButton("02441-ДБ")
         g4 = types.KeyboardButton("02461-ДБ")
         g5 = types.KeyboardButton("02471-ДБ")
-        g5 = types.KeyboardButton("02481-ДБ")
-        markup.add(g1, g2, g3, g4, g5)
+        g6 = types.KeyboardButton("02481-ДБ")
+        markup.add(g1, g2, g3, g4, g5, g6)
         bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
     
     # Обработка групп по кнопкам или краткому номеру
     elif group_input in short_group_map:
         full_name, url_num = short_group_map[group_input]
-        parsing(message, url_num)
+        schedule_data = get_schedule(full_name, url_num)
+        
+        if schedule_data:
+            send_schedule(message, schedule_data, full_name)
+        else:
+            bot.send_message(message.chat.id, "Не удалось получить расписание. Попробуйте позже.")
     
-    # Обработка полных названий групп (регистронезависимая)
+    # Обработка полных названий групп
     else:
         input_upper = group_input.upper()
         found = False
         for short, (full, url) in short_group_map.items():
             if input_upper == full.upper():
-                parsing(message, url)
-                found = True
+                schedule_data = get_schedule(full, url)
+                if schedule_data:
+                    send_schedule(message, schedule_data, full)
+                    found = True
                 break
         
         if not found:
             bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
 
+init_db()
 bot.infinity_polling()
