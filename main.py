@@ -209,7 +209,7 @@ def parse_and_save_schedule(url_num, group_name):
         save_schedule_to_db(group_name, week_type, data)
         return data
     except Exception as e:
-        print(f"Ошибка при парсинге для {group_name}: {str(e)}")
+        print(f"Ошибка при парсинге для {group_name}: {e.msg}")
         return None
     
 # Функция для получения расписания (из базы или парсинга)
@@ -237,7 +237,7 @@ def update_database():
                 print(f"Ошибка при обновлении группы {group_name}: {str(e)}")
         
         print(f"{datetime.now()} - Обновление завершено")
-        time.sleep(600)  # 10 минут
+        time.sleep(3600)  # 10 минут
 
 # Запуск фонового потока для обновления базы
 update_thread = threading.Thread(target=update_database, daemon=True)
@@ -363,6 +363,7 @@ def message_reply(message):
         
         if not found:
             bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
+    print(f"{datetime.now().time()} - Запрос от: {message.from_user.username}")
 
 init_db()
 bot.infinity_polling()

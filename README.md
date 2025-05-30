@@ -16,7 +16,7 @@
     1. [Создание виртуального окружения](#3.1)
     2. [Активация окружения](#3.2)
     3. [Запуск бота](#3.3)
-    4. [Обновление ```requirements.txt```](#3.4)
+    4. [Обновление requirements.txt](#3.4)
 4. [](#4)
 
 ***
@@ -41,6 +41,7 @@
 
 ```bash
 git clone https://github.com/dydojopka/tg-bot-raspmath-isu.git
+cd tg-bot-raspmath-isu/
 ```
 
 ### <a id="2.3"> Установка зависимостей
@@ -54,7 +55,10 @@ pip install -r requirements.txt
 ## <a id="3">3. Запуск и работа
 
 ### <a id="3.1">Создание виртуального окружения
-
+> [!NOTE]  
+> Удобнее создавать окружение НЕ в корневой папке проекта,
+> чтобы не записать лишние зависимотси при помощи ```pipreqs```
+  
 ```bash
 python -m venv tgbot # Создаст папку tgbot с изолированным окружением
 ```
@@ -71,10 +75,14 @@ source myenv/bin/activate
 tgbot\Scripts\activate
 ```
 
+#### Деактивируйте окружение (когда закончите)
+```bash
+deactivate
+```
+
 ### <a id="3.3">Запуск бота
 
 ```bash
-cd tg-bot-raspmath-isu/
 python main.py
 ```
 
@@ -88,11 +96,6 @@ pip install pipreqs
 #### Использование pipreqs
 ```bash
 pipreqs . --force  # Генерация requirements.txt в текущей папке
-```
-
-#### Деактивируйте окружение (когда закончите)
-```bash
-deactivate
 ```
 
 > [!WARNING]  
