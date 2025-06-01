@@ -41,6 +41,10 @@
 
 ```bash
 git clone https://github.com/dydojopka/tg-bot-raspmath-isu.git
+```
+
+И перейдите к нему
+```bash
 cd tg-bot-raspmath-isu/
 ```
 

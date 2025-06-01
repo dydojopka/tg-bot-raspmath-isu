@@ -3,7 +3,7 @@ import os
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
-from datetime import date, datetime
+from datetime import date, datetime, timezone
 import telebot
 from telebot import types
 import sqlite3
@@ -66,6 +66,9 @@ short_group_map = {
     "2481": ("02481-ДБ", 50),
 }
 
+# Получение локального времени
+local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+
 # Создание и инициализация базы данных
 def init_db():
     conn = sqlite3.connect('schedule.db')
@@ -80,7 +83,7 @@ def init_db():
             subject TEXT,
             teacher TEXT,
             classroom TEXT,
-            timestamp DATETIME DEFAULT CURRENT_TIMESTAMP,
+            timestamp DATETIME,
             UNIQUE(group_name, week_type, day, lesson_number)
         )
     ''')
@@ -112,9 +115,9 @@ def save_schedule_to_db(group_name, week_type, schedule_data):
                     
                     cursor.execute('''
                         INSERT INTO schedule 
-                        (group_name, week_type, day, lesson_number, subject, teacher, classroom) 
-                        VALUES (?, ?, ?, ?, ?, ?, ?)
-                    ''', (group_name, week_type, day, lesson_num, subject, teacher, classroom))
+                        (group_name, week_type, day, lesson_number, subject, teacher, classroom, timestamp) 
+                        VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                    ''', (group_name, week_type, day, lesson_num, subject, teacher, classroom, local_timestamp))
         conn.commit()
     finally:
         conn.close()
@@ -124,28 +127,27 @@ def get_schedule_from_db(group_name, day):
     conn = sqlite3.connect('schedule.db')
     cursor = conn.cursor()
     try:
-        # Получаем последнее доступное расписание для группы
         cursor.execute('''
-            SELECT subject, teacher, classroom 
+            SELECT subject, teacher, classroom, MAX(timestamp)
             FROM schedule 
             WHERE group_name = ? AND day = ?
+            GROUP BY lesson_number
             ORDER BY lesson_number
         ''', (group_name, day))
-        
+
         results = cursor.fetchall()
         if results:
-            # Преобразуем результаты в формат, совместимый с текущей логикой
-            subject = []
-            teacher = []
-            classroom = []
-            for subj, teach, clrm in results:
+            subject, teacher, classroom, timestamp = [], [], [], []
+            for subj, teach, clrm, ts in results:
                 subject.append(subj if subj is not None else '-----')
                 teacher.append(teach if teach is not None else '-----')
                 classroom.append(clrm if clrm is not None else '-----')
-            return {'subject': subject, 'teacher': teacher, 'clr': classroom}
+                timestamp.append(ts)
+            return {'subject': subject, 'teacher': teacher, 'clr': classroom, 'timestamp': timestamp}
         return None
     finally:
         conn.close()
+
 
 # Функция парсинга с сохранением в базу данных
 def parse_and_save_schedule(url_num, group_name):
@@ -214,15 +216,16 @@ def parse_and_save_schedule(url_num, group_name):
     
 # Функция для получения расписания (из базы или парсинга)
 def get_schedule(group_name, url_num):
-    # Пытаемся получить данные из базы
     day = date.today().weekday()
+    if day == 6:
+        return {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}  # пустое расписание для воскресенья
+
     schedule_data = get_schedule_from_db(group_name, day)
-    
-    # Если данных нет - парсим и сохраняем
     if not schedule_data:
         schedule_data = parse_and_save_schedule(url_num, group_name)
-    
+
     return schedule_data
+
 
 # Функция для фонового обновления базы данных
 def update_database():
@@ -243,6 +246,7 @@ def update_database():
 update_thread = threading.Thread(target=update_database, daemon=True)
 update_thread.start()
 
+# Команда /start
 @bot.message_handler(commands=['start'])
 def button_message(message):
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
@@ -256,37 +260,85 @@ def button_message(message):
     markup.add(c4)
     bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться к выбору курса отправь /start', reply_markup=markup)
 
-def send_schedule(message, schedule_data, group_name):
-    tday = date.today().weekday()
+# Формаирование сообщения
+def send_schedule(message, schedule_data, group_name, day=None, edit=False, message_id=None):
+    tday = day if day is not None else date.today().weekday()
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
-    day_name = days[tday]
-    
+    lesson_times = [
+        "08.30-10.00", "10.10-11.40", "11.50-13.20",
+        "13.50-15.20", "15.30-17.00", "17.10-18.40", "18.50-20.20"
+    ]
+
+    day_name = days[tday] if tday < len(days) else f"День {tday}"
+
+    # Генерация текста
     if tday == 6:
-        bot.send_message(message.chat.id, "Сегодня воскресенье")
+        msg = f"🗓️ _{day_name} - {group_name}_\nСегодня воскресенье — пар нет.\n"
     else:
-        lesson_times = [
-            "08.30-10.00", "10.10-11.40", "11.50-13.20", 
-            "13.50-15.20", "15.30-17.00", "17.10-18.40", "18.50-20.20"
-        ]
-        
-        msg = f"🗓️{day_name} - {group_name}\n"
-        # Просто перебираем все пары для текущего дня (их 7)
+        msg = f"🗓️ _{day_name} - {group_name}_\n"
         for i in range(7):
             if i < len(schedule_data['subject']):
                 subject = schedule_data['subject'][i] or '-----'
                 teacher = schedule_data['teacher'][i] or '-----'
                 classroom = schedule_data['clr'][i] or '-----'
-                
-                msg += f"⌚{lesson_times[i]}:\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
-        
-        bot.send_message(message.chat.id, msg)
+                last_updated  = schedule_data['timestamp'][i]
+                msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+        msg += f"\n ⚠️`Последнее обновление:{last_updated}`"
+
+    # Кнопки
+    keyboard = types.InlineKeyboardMarkup()
+    if tday == 0:
+        keyboard.add(types.InlineKeyboardButton("➡️ Завтра", callback_data=f"day:{group_name}:{tday + 1}"))
+    elif tday == 6 or tday == 5:
+        keyboard.add(types.InlineKeyboardButton("⬅️ Вчера", callback_data=f"day:{group_name}:{tday - 1}"))
+    else:
+        keyboard.add(
+            types.InlineKeyboardButton("⬅️ Вчера", callback_data=f"day:{group_name}:{tday - 1}"),
+            types.InlineKeyboardButton("➡️ Завтра", callback_data=f"day:{group_name}:{tday + 1}")
+        )
+
+    # Отправка
+    if edit:
+        bot.edit_message_text(chat_id=message.chat.id, message_id=message_id, text=msg, reply_markup=keyboard, parse_mode='Markdown')
+    else:
+        bot.send_message(message.chat.id, msg, reply_markup=keyboard, parse_mode='Markdown')
+
+
+# Обработать нажатия на инлайн-кнопки
+@bot.callback_query_handler(func=lambda call: call.data.startswith("day:"))
+def handle_day_navigation(call):
+    try:
+        _, group_name, day_str = call.data.split(":")
+        day = int(day_str)
+        day = max(0, min(5, day))  # Ограничение Пн-Сб (0-5)
+
+        # Найти short_group_map по полному названию
+        url_num = None
+        for short, (full, url) in short_group_map.items():
+            if full == group_name:
+                url_num = url
+                break
+
+        if url_num is None:
+            bot.answer_callback_query(call.id, "Группа не найдена")
+            return
+
+        schedule_data = get_schedule_from_db(group_name, day)
+        if schedule_data:
+            send_schedule(call.message, schedule_data, group_name, day=day, edit=True, message_id=call.message.message_id)
+        else:
+            bot.answer_callback_query(call.id, "Нет данных на выбранный день")
+    except Exception as e:
+        print(f"Ошибка в handle_day_navigation: {e}")
+        bot.answer_callback_query(call.id, "Ошибка обработки")
+
 
 @bot.message_handler(content_types='text')
 def message_reply(message):
     user_input = message.text.strip().lower()
     group_input = message.text.strip()
     
-    # Обработка кнопок курсов (регистронезависимая)
+    # Обработка кнопок курсов
     if user_input in ["курс 1", "курс1"]:
         markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
         g1 = types.KeyboardButton("02121-ДБ")
@@ -345,13 +397,15 @@ def message_reply(message):
         schedule_data = get_schedule(full_name, url_num)
         
         if schedule_data:
-            send_schedule(message, schedule_data, full_name)
+            day = date.today().weekday()
+            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}, full_name, day=day)
         else:
-            bot.send_message(message.chat.id, "Не удалось получить расписание. Попробуйте позже.")
+            day = date.today().weekday()
+            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}, full_name, day=day)
     
     # Обработка полных названий групп
     else:
-        input_upper = group_input.upper()
+        input_upper = group_input.strip().upper()
         found = False
         for short, (full, url) in short_group_map.items():
             if input_upper == full.upper():
