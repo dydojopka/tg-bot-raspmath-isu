@@ -11,7 +11,9 @@ import threading
 import time
 
 load_dotenv()
-TOKEN = os.getenv("TELEGRAM_BOT_TOKEN")
+TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
+if not TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN не найден в переменных окружения.")
 bot = telebot.TeleBot(TOKEN)
 
 # Инициализация драйвера Chrome
@@ -69,7 +71,9 @@ short_group_map = {
 # Получение локального времени
 local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-# Создание и инициализация базы данных
+# -------- Работа с бд расписания --------
+
+# Инициализация базы данных расписания
 def init_db():
     conn = sqlite3.connect('schedule.db')
     cursor = conn.cursor()
@@ -226,7 +230,6 @@ def get_schedule(group_name, url_num):
 
     return schedule_data
 
-
 # Функция для фонового обновления базы данных
 def update_database():
     while True:
@@ -246,6 +249,39 @@ def update_database():
 update_thread = threading.Thread(target=update_database, daemon=True)
 update_thread.start()
 
+# -------- Работа с бд настроек пользователей --------
+
+def init_user_settings_db():
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS user_settings (
+            username TEXT PRIMARY KEY,
+            mode TEXT CHECK(mode IN ('full', 'short')) NOT NULL DEFAULT 'full'
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+def get_user_mode(username):
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT mode FROM user_settings WHERE username = ?', (username,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row else 'full'
+
+def toggle_user_mode(username):
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    current = get_user_mode(username)
+    new_mode = 'short' if current == 'full' else 'full'
+    cursor.execute('REPLACE INTO user_settings (username, mode) VALUES (?, ?)', (username, new_mode))
+    conn.commit()
+    conn.close()
+    return new_mode
+
+
 # Команда /start
 @bot.message_handler(commands=['start'])
 def button_message(message):
@@ -258,35 +294,67 @@ def button_message(message):
     markup.add(c2)
     markup.add(c3)
     markup.add(c4)
-    bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться к выбору курса отправь /start', reply_markup=markup)
+    bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться на главную - отправь /start', reply_markup=markup)
 
 # Формаирование сообщения
-def send_schedule(message, schedule_data, group_name, day=None, edit=False, message_id=None):
+def send_schedule(message, schedule_data, group_name, day=None, edit=False, message_id=None, force_mode=None):
+    from datetime import date
+    from telebot import types
+
+    def get_username(msg):
+        return msg.from_user.username or str(msg.chat.id)
+
     tday = day if day is not None else date.today().weekday()
+    username = message.from_user.username or str(message.chat.id)
+    mode = force_mode or get_user_mode(username)
+
     days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
     lesson_times = [
-        "08.30-10.00", "10.10-11.40", "11.50-13.20",
-        "13.50-15.20", "15.30-17.00", "17.10-18.40", "18.50-20.20"
+        "08.30-10.00", 
+        "10.10-11.40", 
+        "11.50-13.20",
+        "13.50-15.20", 
+        "15.30-17.00", 
+        "17.10-18.40", 
+        "18.50-20.20"
     ]
-
     day_name = days[tday] if tday < len(days) else f"День {tday}"
 
-    # Генерация текста
     if tday == 6:
         msg = f"🗓️ _{day_name} - {group_name}_\nСегодня воскресенье — пар нет.\n"
     else:
         msg = f"🗓️ _{day_name} - {group_name}_\n"
-        for i in range(7):
-            if i < len(schedule_data['subject']):
-                subject = schedule_data['subject'][i] or '-----'
-                teacher = schedule_data['teacher'][i] or '-----'
-                classroom = schedule_data['clr'][i] or '-----'
-                last_updated  = schedule_data['timestamp'][i]
-                msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
-        msg += f"\n ⚠️`Последнее обновление:{last_updated}`"
+        
+        # Если режим 'full' — показываем все пары
+        if mode == 'full':
+            for i in range(7):
+                if i < len(schedule_data['subject']):
+                    subject = schedule_data['subject'][i] or '-----'
+                    teacher = schedule_data['teacher'][i] or '-----'
+                    classroom = schedule_data['clr'][i] or '-----'
+                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+        
+        # Если режим 'short' — показываем только непустые пары
+        elif mode == 'short':
+            for i in range(7):
+                if i < len(schedule_data['subject']) and schedule_data['subject'][i] != '-----':
+                    subject = schedule_data['subject'][i]
+                    teacher = schedule_data['teacher'][i]
+                    classroom = schedule_data['clr'][i]
+                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+
+        if schedule_data.get('timestamp'):
+            last_updated = max(schedule_data['timestamp'])
+            msg += f"\n ⚠️`Последнее обновление:{last_updated}`"
 
     # Кнопки
     keyboard = types.InlineKeyboardMarkup()
+
+    # Кнопка переключения режима
+    switch_label = f"🔄 Отображение: {'Полное' if mode == 'full' else 'Краткое'}"
+    keyboard.add(types.InlineKeyboardButton(switch_label, callback_data=f"toggle_mode:{group_name}:{tday}"))
+
+    # Кнопки навигации по дням
     if tday == 0:
         keyboard.add(types.InlineKeyboardButton("➡️ Завтра", callback_data=f"day:{group_name}:{tday + 1}"))
     elif tday == 6 or tday == 5:
@@ -299,7 +367,13 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
 
     # Отправка
     if edit:
-        bot.edit_message_text(chat_id=message.chat.id, message_id=message_id, text=msg, reply_markup=keyboard, parse_mode='Markdown')
+        try:
+           # Только если текст отличается — редактировать
+            if message.text != msg:
+                bot.edit_message_text(chat_id=message.chat.id, message_id=message_id,
+                                      text=msg, reply_markup=keyboard, parse_mode='Markdown')
+        except Exception as e:
+           print(f"Ошибка редактирования сообщения: {e}")
     else:
         bot.send_message(message.chat.id, msg, reply_markup=keyboard, parse_mode='Markdown')
 
@@ -307,6 +381,7 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
 # Обработать нажатия на инлайн-кнопки
 @bot.callback_query_handler(func=lambda call: call.data.startswith("day:"))
 def handle_day_navigation(call):
+    # Кнопки перелистывания дня
     try:
         _, group_name, day_str = call.data.split(":")
         day = int(day_str)
@@ -325,7 +400,9 @@ def handle_day_navigation(call):
 
         schedule_data = get_schedule_from_db(group_name, day)
         if schedule_data:
-            send_schedule(call.message, schedule_data, group_name, day=day, edit=True, message_id=call.message.message_id)
+            username = call.from_user.username or str(call.message.chat.id)
+            mode = get_user_mode(username)
+            send_schedule(call.message, schedule_data, group_name, day=day, edit=True, message_id=call.message.message_id, force_mode=mode)
         else:
             bot.answer_callback_query(call.id, "Нет данных на выбранный день")
     except Exception as e:
@@ -333,91 +410,131 @@ def handle_day_navigation(call):
         bot.answer_callback_query(call.id, "Ошибка обработки")
 
 
+# Обработка режима вывода рассписания
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_mode:"))
+def handle_mode_toggle(call):
+    try:
+        _, group_name, day_str = call.data.split(":")
+        day = int(day_str)
+        username = call.from_user.username or str(call.message.chat.id)
+        new_mode = toggle_user_mode(username)
+
+        # Получаем расписание для указанного дня
+        schedule_data = get_schedule_from_db(group_name, day)
+
+        # Редактируем сообщение только в случае, если режим был изменён
+        send_schedule(call.message, schedule_data, group_name, day=day, edit=True, message_id=call.message.message_id, force_mode=new_mode)
+
+        bot.answer_callback_query(call.id, f"Режим переключен на: {new_mode}")
+    except Exception as e:
+        print(f"Ошибка в handle_mode_toggle: {e}")
+        bot.answer_callback_query(call.id, "Не удалось переключить режим")
+        
+
+# Обработка сообщений
 @bot.message_handler(content_types='text')
 def message_reply(message):
     user_input = message.text.strip().lower()
-    group_input = message.text.strip()
-    
-    # Обработка кнопок курсов
-    if user_input in ["курс 1", "курс1"]:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02121-ДБ")
-        g2 = types.KeyboardButton("02122-ДБ")
-        g3 = types.KeyboardButton("02123-ДБ")
-        g4 = types.KeyboardButton("02141-ДБ")
-        g5 = types.KeyboardButton("02161-ДБ")
-        g6 = types.KeyboardButton("02162-ДБ")
-        g7 = types.KeyboardButton("02171-ДБ")
-        g8 = types.KeyboardButton("02172-ДБ")
-        g9 = types.KeyboardButton("02181-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7, g8, g9)
-        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-        
-    elif user_input in ["курс 2", "курс2"]:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02221-ДБ")
-        g2 = types.KeyboardButton("02222-ДБ")
-        g3 = types.KeyboardButton("02223-ДБ")
-        g4 = types.KeyboardButton("02241-ДБ")
-        g5 = types.KeyboardButton("02261-ДБ")
-        g6 = types.KeyboardButton("02262-ДБ")
-        g7 = types.KeyboardButton("02271-ДБ")
-        g8 = types.KeyboardButton("02272-ДБ")
-        g9 = types.KeyboardButton("02281-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7, g8, g9)
-        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-        
-    elif user_input in ["курс 3", "курс3"]:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02321-ДБ")
-        g2 = types.KeyboardButton("02322-ДБ")
-        g3 = types.KeyboardButton("02323-ДБ")
-        g4 = types.KeyboardButton("02341-ДБ")
-        g5 = types.KeyboardButton("02361-ДБ")
-        g6 = types.KeyboardButton("02362-ДБ")
-        g7 = types.KeyboardButton("02371-ДБ")
-        g8 = types.KeyboardButton("02381-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6, g7, g8)
-        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-        
-    elif user_input in ["курс 4", "курс4"]:
-        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-        g1 = types.KeyboardButton("02421-ДБ")
-        g2 = types.KeyboardButton("02422-ДБ")
-        g3 = types.KeyboardButton("02441-ДБ")
-        g4 = types.KeyboardButton("02461-ДБ")
-        g5 = types.KeyboardButton("02471-ДБ")
-        g6 = types.KeyboardButton("02481-ДБ")
-        markup.add(g1, g2, g3, g4, g5, g6)
-        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-    
-    # Обработка групп по кнопкам или краткому номеру
-    elif group_input in short_group_map:
-        full_name, url_num = short_group_map[group_input]
-        schedule_data = get_schedule(full_name, url_num)
-        
-        if schedule_data:
-            day = date.today().weekday()
-            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}, full_name, day=day)
-        else:
-            day = date.today().weekday()
-            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}, full_name, day=day)
-    
-    # Обработка полных названий групп
-    else:
-        input_upper = group_input.strip().upper()
-        found = False
-        for short, (full, url) in short_group_map.items():
-            if input_upper == full.upper():
-                schedule_data = get_schedule(full, url)
-                if schedule_data:
-                    send_schedule(message, schedule_data, full)
-                    found = True
-                break
-        
-        if not found:
-            bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
-    print(f"{datetime.now().time()} - Запрос от: {message.from_user.username}")
 
+    # Если сообщение "вернуться на главную", вызываем тот же обработчик, что и для команды /start
+    if user_input == "вернуться на главную":
+        button_message(message)
+    else:
+
+        group_input = message.text.strip()
+
+        username = message.from_user.username or str(message.chat.id)
+        mode = get_user_mode(username)
+        day = date.today().weekday()
+
+        # Обработка кнопок курсов
+        if user_input in ["курс 1", "курс1"]:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(*[types.KeyboardButton(name) for name in [
+                "02121-ДБ", 
+                "02122-ДБ", 
+                "02123-ДБ", 
+                "02141-ДБ",
+                "02161-ДБ", 
+                "02162-ДБ", 
+                "02171-ДБ", 
+                "02172-ДБ", 
+                "02181-ДБ"
+           ]])
+            markup.add(types.KeyboardButton("Вернуться на главную"))
+            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+
+        elif user_input in ["курс 2", "курс2"]:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(*[types.KeyboardButton(name) for name in [
+                "02221-ДБ", 
+                "02222-ДБ", 
+                "02223-ДБ", 
+                "02241-ДБ",
+                "02261-ДБ",
+                "02262-ДБ", 
+                "02271-ДБ", 
+                "02272-ДБ", 
+                "02281-ДБ"
+            ]])
+            markup.add(types.KeyboardButton("Вернуться на главную"))
+            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+
+        elif user_input in ["курс 3", "курс3"]:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(*[types.KeyboardButton(name) for name in [
+                "02321-ДБ", 
+                "02322-ДБ", 
+                "02323-ДБ", 
+                "02341-ДБ",
+                "02361-ДБ", 
+                "02362-ДБ", 
+                "02371-ДБ", 
+                "02381-ДБ"
+            ]])
+            markup.add(types.KeyboardButton("Вернуться на главную"))
+            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+
+        elif user_input in ["курс 4", "курс4"]:
+            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+            markup.add(*[types.KeyboardButton(name) for name in [
+               "02421-ДБ", 
+               "02422-ДБ", 
+                "02441-ДБ", 
+                "02461-ДБ",
+                "02471-ДБ", 
+                "02481-ДБ"
+            ]])
+            markup.add(types.KeyboardButton("Вернуться на главную"))
+            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+
+        # Обработка ввода по краткому номеру группы
+        elif group_input in short_group_map:
+            full_name, url_num = short_group_map[group_input]
+            schedule_data = get_schedule(full_name, url_num)
+            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
+                          full_name, day=day, force_mode=mode)
+
+        # Обработка ввода по полному названию группы
+        else:
+            input_upper = group_input.strip().upper()
+            found = False
+            for short, (full, url) in short_group_map.items():
+                if input_upper == full.upper():
+                    schedule_data = get_schedule(full, url)
+                    send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
+                                  full, day=day, force_mode=mode)
+                    found = True
+                    break
+
+            if not found:
+                bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
+
+        print(f"{datetime.now().time()} - Запрос от: {message.from_user.username}")
+    
+        pass
+
+
+init_user_settings_db()
 init_db()
 bot.infinity_polling()
