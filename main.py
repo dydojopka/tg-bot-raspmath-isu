@@ -68,6 +68,125 @@ short_group_map = {
     "2481": ("02481-ДБ", 50),
 }
 
+teacher_map = {
+    "Айсанова Александра Андреевна",
+    "Александрович Ольга Юрьевна",
+    "Амбросов Николай Владимирович",
+    "Антипина Екатерина Дмитриевна",
+    "Антоник Владимир Георгиевич",
+    "Аргучинцев Александр Валерьевич",
+    "Балагура Анна Александровна",
+    "Балашов Александр Викторович",
+    "Болотов Андрей Валентинович",
+    "Брагин Александр Евгеньевич",
+    "Бринько Игорь Иванович",
+    "Винокуров Сергей Федорович",
+    "Вшивков Юрий Фёдорович",
+    "Вырупаева Татьяна Владимировна", # их две: №99 и №112
+    "Гаврилин Денис Николаевич",
+    "Гаврилина Дарья Эдуардовна",
+    "Гаер Максим Александрович",
+    "Глебец Иван Владимирович",
+    "Головко Елена Анатольевна",
+    "Гончакук Даниил Евгеньевич", # их двое: №108 и №3
+    "Гражданцева Елена Юрьевна",
+    "Григорьев Станислав Валентинович",
+    "Грицких Надежда Викторовна",
+    "Грошева Надежда Борисовна",
+    "Гуренков Андрей Александрович",
+    "Деденко Михаил Михайлович",
+    "Евдокимов Дмитрий Максимович",
+    "Ермолаева Екатерина Валерьевна",
+    "Захарова Ирина Валентиновна",
+    "Захарченко Варвара Сергеевна",
+    "Зинченко Анна Сергеевна",
+    "Зубков Олег Владимирович",
+    "Иванова Ана Леонидовна",
+    "Ильин Борис Петрович",
+    "Иов Роман Вадимович",
+    "Казимиров Алексей Сергеевич",
+    "Калинина Нина Викторовна",
+    "Каратуева Нина Анатольевна", # их две: №98 и №109
+    "Карелин Александр Геннадьевич",
+    "Кедрин Виктор Сергеевич",
+    "Кензин Максим Юрьевич",
+    "Кириченко Константин Дмитриевич",
+    "Колокольникова Наталья Арсеньевна",
+    "Колпакиди Наталия Леонидовна",
+    "Колпакиди Дмитрий Викторович",
+    "Комаров Алексей Владимирович",
+    "Копылова Наталья Юрьевна",
+    "Косогова Анастасия Самсоновна",
+    "Кривель Сергей Михайлович",
+    "Кузьмин Олег Викторович",
+    "Кузьмина Елена Юрьевна",
+    "Курзыбова Яна Владимировна",
+    "Лавлинский Максим Викторович",
+    "Лашина Елена Борисовна",
+    "Леонтьев Роман Юрьевич",
+    "Ли-Дэ Даниил Игоревич",
+    "Лохов Сергей Николаевич",
+    "ЛЭТИ",
+    "Малышева Мария Андреевна",
+    "Мальчукова Нина Валерьевна",
+    "Манцивода Андрей Валерьевич",
+    "Мартьянов Владимир Иванович",
+    "Массель Алексей Геннадьевич",
+    "Метёлкина Лариса Николаевна",
+    "Михайлов Андрей Анатольевич",
+    "Московская Татьяна Эдуардовна,",
+    "Мутовин Павел Николаевич",
+    "Муценек Витус Евгеньевич",
+    "Осипенко Лариса Анатольевна",
+    "Пантелеев Владимир Иннокентьевич",
+    "Парамонов Вячеслав Владимирович",
+    "Пахомов Дмитрий Вячеславович",
+    "Перязев Николай Алексеевич",
+    "Петренко Павел Сергеевич",
+    "Петрова Наталья Васильевна",
+    "Петрушин Иван Сергеевич",
+    "Плотникова Ирина Ивановна",
+    "Поплевко Василиса Павловна",
+    "Попова Виктория Алексеевна",
+    "Рейнгольд Михаил Григорьевич",
+    "Рябец Леонид Владимирович",
+    "Салимов Борис Гудратович",
+    "Салтыков Александр Сергеевич",
+    "Самсонюк Ольга Николаевна",
+    "Семенов Андрей Леонидович",
+    "Серебренников Денис Александрович",
+    "Серёдкина Александра Сергеевна",
+    "Сидоров Денис Николаевич",
+    "Слободняк Илья Анатольевич",
+    "Сокольская Мария Александровна",
+    "Солодуша Светлана Витальевна",
+    "Сорокин Степан Павлович",
+    "Срочко Владимир Андреевич",
+    "Тагласов Эдуард Станиславович",
+    "Тарасенко Василий Анатольевич",
+    "Тобола Кирилл Владимирович",
+    "Толстихин Антон Артемович",
+    "Тюрнева Татьяна Геннадьевна",
+    "Уланов Илья Викторович",
+    "Фалалеев Михаил Валентинович",
+    "Федоров Роман Константинович",
+    "Фереферов Евгений Сергеевич",
+    "Физическая культура и спорт",
+    "Хамисов Олег Валерьевич",
+    "Хара Алина",
+    "Харахинов Владимир Александрович",
+    "Черкашин Евгений Александрович", # их двое: №54 и №128
+    "Шахова Ирина Савельевна",
+    "Шеломенцева Наталья Николаевна",
+    "Шеметова Людмила Николаевна",
+    "Шигаров Алексей Олегович",
+    "Шипилова Ольга Ивановна",
+    "Шмелев Валерий Юрьевич",
+    "Щербаков Алексей Борисович",
+    "Элективные курсы по физической культуре и спорту",
+    "Ямушева Ирина Валерьевна,",
+}
+
 # Получение локального времени
 local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
@@ -104,8 +223,8 @@ def save_schedule_to_db(group_name, week_type, schedule_data):
                       (group_name, week_type))
         
         # Вставляем новые данные
-        for day in range(6):  # Пн-Сб
-            for lesson_num in range(7):  # 7 пар в день
+        for day in range(6): # Пн-Сб
+            for lesson_num in range(7): # 7 пар в день
                 idx = lesson_num * 6 + day
                 if idx < len(schedule_data['subject']):
                     subject = schedule_data['subject'][idx]
@@ -151,7 +270,6 @@ def get_schedule_from_db(group_name, day):
         return None
     finally:
         conn.close()
-
 
 # Функция парсинга с сохранением в базу данных
 def parse_and_save_schedule(url_num, group_name):
@@ -222,7 +340,7 @@ def parse_and_save_schedule(url_num, group_name):
 def get_schedule(group_name, url_num):
     day = date.today().weekday()
     if day == 6:
-        return {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []}  # пустое расписание для воскресенья
+        return {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []} # пустое расписание для воскресенья
 
     schedule_data = get_schedule_from_db(group_name, day)
     if not schedule_data:
@@ -243,7 +361,7 @@ def update_database():
                 print(f"Ошибка при обновлении группы {group_name}: {str(e)}")
         
         print(f"{datetime.now()} - Обновление завершено")
-        time.sleep(3600)  # 10 минут
+        time.sleep(3600) # Раз в час
 
 # Запуск фонового потока для обновления базы
 update_thread = threading.Thread(target=update_database, daemon=True)
@@ -282,19 +400,68 @@ def toggle_user_mode(username):
     return new_mode
 
 
-# Команда /start
-@bot.message_handler(commands=['start'])
-def button_message(message):
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    c1 = types.KeyboardButton("Курс 1")
-    c2 = types.KeyboardButton("Курс 2")
-    c3 = types.KeyboardButton("Курс 3")
-    c4 = types.KeyboardButton("Курс 4")
-    markup.add(c1)
-    markup.add(c2)
-    markup.add(c3)
-    markup.add(c4)
-    bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться на главную - отправь /start', reply_markup=markup)
+# Список с преподавателями в инлайн-кнопках
+TEACHERS_PER_PAGE = 10
+teacher_list = sorted(list(teacher_map))  # глобально за пределами функции
+
+def show_teacher_page(chat_id, page=0, message_id=None):
+    total_pages = max(1, (len(teacher_list) - 1) // TEACHERS_PER_PAGE + 1)
+    start = page * TEACHERS_PER_PAGE
+    end = start + TEACHERS_PER_PAGE
+    teachers_on_page = teacher_list[start:end]
+
+    keyboard = types.InlineKeyboardMarkup(row_width=1)
+    
+    # Добавляем кнопки преподавателей
+    for idx in range(start, min(end, len(teacher_list))):
+        teacher_name = teacher_list[idx]
+        keyboard.add(types.InlineKeyboardButton(teacher_name, callback_data=f"select_teacher:{idx}"))
+    
+    # Создаем навигационные кнопки
+    nav_buttons = []
+    if page > 0:
+        nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"teacher_page:{page - 1}"))
+    if page < total_pages - 1:
+        nav_buttons.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_page:{page + 1}"))
+    
+    # Добавляем навигацию в одну строку
+    if nav_buttons:
+        keyboard.row(*nav_buttons)
+    
+    # Текст сообщения
+    message_text = "Выберите преподавателя ниже или введите имя вручную:"
+    
+    # Редактируем существующее сообщение или отправляем новое
+    if message_id:
+        try:
+            bot.edit_message_text(
+                chat_id=chat_id,
+                message_id=message_id,
+                text=message_text,
+                reply_markup=keyboard
+            )
+        except Exception as e:
+            print(f"Ошибка при редактировании сообщения: {e}")
+            # Если редактирование не удалось, отправляем новое сообщение
+            bot.send_message(chat_id, message_text, reply_markup=keyboard)
+    else:
+        bot.send_message(chat_id, message_text, reply_markup=keyboard)
+
+# Обработчик инлайн-кнопок для перелистывания
+@bot.callback_query_handler(func=lambda call: call.data.startswith("teacher_page:"))
+def handle_teacher_pagination(call):
+    page = int(call.data.split(":")[1])
+    # Передаем ID сообщения для редактирования
+    show_teacher_page(call.message.chat.id, page, call.message.message_id)
+
+# Обработчик выбора преподавателя (остается без изменений)
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_teacher:"))
+def handle_teacher_select(call):
+    index = int(call.data.split(":")[1])
+    teacher_name = teacher_list[index]
+    bot.answer_callback_query(call.id)
+    bot.send_message(call.message.chat.id, f"Вы выбрали преподавателя: {teacher_name}")
+
 
 # Формаирование сообщения
 def send_schedule(message, schedule_data, group_name, day=None, edit=False, message_id=None, force_mode=None):
@@ -431,6 +598,21 @@ def handle_mode_toggle(call):
         bot.answer_callback_query(call.id, "Не удалось переключить режим")
         
 
+# Команда /start
+@bot.message_handler(commands=['start'])
+def button_message(message):
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    c1 = types.KeyboardButton("Курс 1")
+    c2 = types.KeyboardButton("Курс 2")
+    c3 = types.KeyboardButton("Курс 3")
+    c4 = types.KeyboardButton("Курс 4")
+    t_search = types.KeyboardButton("Поиск по преподавателю")
+
+    markup.add(c1, c2)
+    markup.add(c3, c4)
+    markup.add(t_search)
+    bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться на главную - отправь /start', reply_markup=markup)
+
 # Обработка сообщений
 @bot.message_handler(content_types='text')
 def message_reply(message):
@@ -498,8 +680,8 @@ def message_reply(message):
         elif user_input in ["курс 4", "курс4"]:
             markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
             markup.add(*[types.KeyboardButton(name) for name in [
-               "02421-ДБ", 
-               "02422-ДБ", 
+                "02421-ДБ", 
+                "02422-ДБ", 
                 "02441-ДБ", 
                 "02461-ДБ",
                 "02471-ДБ", 
@@ -507,6 +689,10 @@ def message_reply(message):
             ]])
             markup.add(types.KeyboardButton("Вернуться на главную"))
             bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+
+        elif user_input == "поиск по преподавателю":
+            show_teacher_page(message.chat.id, page=0)
+
 
         # Обработка ввода по краткому номеру группы
         elif group_input in short_group_map:
