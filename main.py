@@ -541,7 +541,7 @@ def update_database():
 
         print(f"{datetime.now()} - Обновление бд расписания преподавателей завершено")
 
-        time.sleep(3600)  # Раз в час
+        time.sleep(21600)  # Раз в 6 часов
         
 # Запуск фонового потока для обновления базы
 update_thread = threading.Thread(target=update_database, daemon=True)
