@@ -3,18 +3,27 @@ import os
 from bs4 import BeautifulSoup
 from selenium import webdriver
 from webdriver_manager.chrome import ChromeDriverManager
-from datetime import date, datetime, timezone
+from datetime import date, datetime, timedelta
 import telebot
 from telebot import types
 import sqlite3
 import threading
 import time
+import requests
 
 load_dotenv()
+
+# API-ключ
+API_TOKEN = os.getenv("RASPMATH_API_KEY", "")
+if not API_TOKEN:
+    raise ValueError("RASPMATH_API_KEY не найден в .env")
+
+# Токен бота
 TOKEN = os.getenv("TELEGRAM_BOT_TOKEN", "")
 if not TOKEN:
     raise ValueError("TELEGRAM_BOT_TOKEN не найден в переменных окружения.")
 bot = telebot.TeleBot(TOKEN)
+
 
 # Инициализация драйвера Chrome
 ChromeDriverManager().install()
@@ -190,7 +199,7 @@ teacher_map = {
 # Получение локального времени
 local_timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
 
-# -------- Работа с бд расписания --------
+# ====== Работа с бд расписания ======
 
 # Инициализация базы данных расписания
 def init_db():
@@ -273,8 +282,6 @@ def get_schedule_from_db(group_name, day):
 
 # Функция парсинга с сохранением в базу данных
 def parse_and_save_schedule(url_num, group_name):
-    print(f"{datetime.now().time()} - Парсинг для: {group_name}")
-    
     data = {
         'subject': [],
         'teacher': [],
@@ -333,7 +340,7 @@ def parse_and_save_schedule(url_num, group_name):
         save_schedule_to_db(group_name, week_type, data)
         return data
     except Exception as e:
-        print(f"Ошибка при парсинге для {group_name}: {e.msg}")
+        print(f"[!] Ошибка при парсинге для {group_name}: {e.msg}")
         return None
     
 # Функция для получения расписания (из базы или парсинга)
@@ -348,38 +355,23 @@ def get_schedule(group_name, url_num):
 
     return schedule_data
 
-# Функция для фонового обновления базы данных
-def update_database():
-    while True:
-        print(f"{datetime.now()} - Начало обновления базы данных")
-        for group_short, (group_name, url_num) in short_group_map.items():
-            try:
-                print(f"Обновление для группы: {group_name}")
-                parse_and_save_schedule(url_num, group_name)
-                time.sleep(2)  # Пауза между запросами
-            except Exception as e:
-                print(f"Ошибка при обновлении группы {group_name}: {str(e)}")
-        
-        print(f"{datetime.now()} - Обновление завершено")
-        time.sleep(3600) # Раз в час
 
-# Запуск фонового потока для обновления базы
-update_thread = threading.Thread(target=update_database, daemon=True)
-update_thread.start()
+# ====== Работа с бд настроек пользователей ======
 
-# -------- Работа с бд настроек пользователей --------
-
+# Инициализация базы данных настроек пользователей
 def init_user_settings_db():
     conn = sqlite3.connect('user_settings.db')
     cursor = conn.cursor()
     cursor.execute('''
         CREATE TABLE IF NOT EXISTS user_settings (
             username TEXT PRIMARY KEY,
-            mode TEXT CHECK(mode IN ('full', 'short')) NOT NULL DEFAULT 'full'
+            mode TEXT CHECK(mode IN ('full', 'short')) NOT NULL DEFAULT 'full',
+            search_mode TEXT CHECK(search_mode IN ('group', 'teacher')) NOT NULL DEFAULT 'group'
         )
     ''')
     conn.commit()
     conn.close()
+
 
 def get_user_mode(username):
     conn = sqlite3.connect('user_settings.db')
@@ -399,10 +391,166 @@ def toggle_user_mode(username):
     conn.close()
     return new_mode
 
+def get_user_search_mode(username):
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    cursor.execute('SELECT search_mode FROM user_settings WHERE username = ?', (username,))
+    row = cursor.fetchone()
+    conn.close()
+    return row[0] if row and row[0] in ['group', 'teacher'] else 'group'
+
+def set_user_search_mode(username, search_mode):
+    if search_mode not in ['group', 'teacher']:
+        return
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    # Проверка: есть ли уже запись?
+    cursor.execute('SELECT username FROM user_settings WHERE username = ?', (username,))
+    if cursor.fetchone():
+        cursor.execute('UPDATE user_settings SET search_mode = ? WHERE username = ?', (search_mode, username))
+    else:
+        cursor.execute('INSERT INTO user_settings (username, mode, search_mode) VALUES (?, "full", ?)', (username, search_mode))
+    conn.commit()
+    conn.close()
+
+
+# ====== Работа с бд преподователей ======
+
+# Инициализация базы данных преподователей
+def init_teacher_db():
+    conn = sqlite3.connect('teacher_schedule.db')
+    cursor = conn.cursor()
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS teacher_schedule (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            teacher TEXT NOT NULL,
+            group_name TEXT NOT NULL,
+            date TEXT NOT NULL,
+            weekday TEXT,
+            pair_start_time TEXT,
+            pair_end_time TEXT,
+            subject_name TEXT,
+            pair_type TEXT,
+            classroom TEXT,
+            week_type TEXT,
+            last_updated TEXT,
+            UNIQUE(teacher, group_name, date, pair_start_time)
+        )
+    ''')
+    conn.commit()
+    conn.close()
+
+# Функция запроса и записи расписания преподавателя
+def fetch_and_save_teacher_schedule(teacher_name, target_dates):
+    url = "https://raspmath.isu.ru/getScheduleForTest"
+    headers = {"x-access-token": API_TOKEN}
+
+    conn = sqlite3.connect("teacher_schedule.db")
+    cursor = conn.cursor()
+
+    # Удаляем все старые записи для данного преподавателя
+    cursor.execute('''
+        DELETE FROM teacher_schedule 
+        WHERE teacher = ?
+    ''', (teacher_name,))
+    conn.commit()
+
+    # --- Запрос и добавление новых записей ---
+    for target_date in target_dates:
+        payload = {
+            "date": target_date,
+            "teacher": teacher_name,
+            "group": ""
+        }
+        
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            data = response.json()
+            
+            for row in data:
+                cursor.execute('''
+                    INSERT OR REPLACE INTO teacher_schedule (
+                        teacher, group_name, date, weekday, pair_start_time, pair_end_time,
+                        subject_name, pair_type, classroom, week_type, last_updated
+                    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    row.get("teacher"),
+                    row.get("group_name"),
+                    target_date,
+                    row.get("weekday"),
+                    row.get("pair_start_time"),
+                    row.get("pair_end_time"),
+                    row.get("subject_name"),
+                    row.get("pair_type"),
+                    row.get("class_name"),
+                    row.get("week_type"),
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ))
+
+            conn.commit()
+        except Exception as e:
+            print(f"[!] Ошибка при запросе расписания для преподавателя {teacher_name} на дату {target_date}: {str(e)}")
+
+    conn.close()
+
+
+# Функция для вычисления диапазона дат для текущей и следующей недели
+def get_week_date_range():
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    end_of_week = start_of_week + timedelta(days=13)  # 2 недели
+    
+    dates = []
+    current = start_of_week
+    while current <= end_of_week:
+        dates.append(current.isoformat())
+        current += timedelta(days=1)
+    
+    return dates
+
+
+# Функция для фонового обновления базы данных
+def update_database():
+    while True:
+        print(f"{datetime.now()} - Начало обновления базы данных...")
+
+        # --- Обновление расписания групп ---
+        for group_short, (group_name, url_num) in short_group_map.items():
+            try:
+                print(f"{datetime.now().time()} - Обновление для группы: {group_name}")
+                parse_and_save_schedule(url_num, group_name)
+                time.sleep(2)  # Пауза между запросами
+            except Exception as e:
+                print(f"[!] Ошибка при обновлении группы {group_name}: {str(e)}")
+        print(f"{datetime.now()} - Обновление бд расписания групп завершено")
+
+        # --- Обновление расписания преподавателей ---
+        print(f"{datetime.now()} - Начало обновления расписания преподавателей...")
+
+        # Получаем все даты для текущей и следующей недели
+        week_dates = get_week_date_range()
+
+        # Для каждого преподавателя обновляем расписание на эти даты
+        for teacher in teacher_map:
+            try:
+                print(f"{datetime.now().time()} - Обновление для преподавателя: {teacher}")
+                fetch_and_save_teacher_schedule(teacher, week_dates)  # Получаем расписание для всех дат
+                time.sleep(0.5)  # Защита от перегрузки API
+            except Exception as e:
+                print(f"[!] Ошибка при обновлении расписания для преподавателя {teacher}: {str(e)}")
+
+        print(f"{datetime.now()} - Обновление бд расписания преподавателей завершено")
+
+        time.sleep(3600)  # Раз в час
+        
+# Запуск фонового потока для обновления базы
+update_thread = threading.Thread(target=update_database, daemon=True)
+update_thread.start()
+
 
 # Список с преподавателями в инлайн-кнопках
 TEACHERS_PER_PAGE = 10
-teacher_list = sorted(list(teacher_map))  # глобально за пределами функции
+teacher_list = sorted(list(teacher_map))
 
 def show_teacher_page(chat_id, page=0, message_id=None):
     total_pages = max(1, (len(teacher_list) - 1) // TEACHERS_PER_PAGE + 1)
@@ -412,40 +560,34 @@ def show_teacher_page(chat_id, page=0, message_id=None):
 
     keyboard = types.InlineKeyboardMarkup(row_width=1)
     
-    # Добавляем кнопки преподавателей
     for idx in range(start, min(end, len(teacher_list))):
         teacher_name = teacher_list[idx]
         keyboard.add(types.InlineKeyboardButton(teacher_name, callback_data=f"select_teacher:{idx}"))
     
-    # Создаем навигационные кнопки
     nav_buttons = []
     if page > 0:
         nav_buttons.append(types.InlineKeyboardButton("⬅️ Назад", callback_data=f"teacher_page:{page - 1}"))
     if page < total_pages - 1:
         nav_buttons.append(types.InlineKeyboardButton("➡️ Далее", callback_data=f"teacher_page:{page + 1}"))
     
-    # Добавляем навигацию в одну строку
     if nav_buttons:
         keyboard.row(*nav_buttons)
     
-    # Текст сообщения
-    message_text = "Выберите преподавателя ниже или введите имя вручную:"
+    message_text = "Выберите преподавателя ниже:"
     
-    # Редактируем существующее сообщение или отправляем новое
+    # Редактируем существующее сообщение, если оно есть
     if message_id:
         try:
-            bot.edit_message_text(
-                chat_id=chat_id,
-                message_id=message_id,
-                text=message_text,
-                reply_markup=keyboard
-            )
+            bot.edit_message_text(chat_id=chat_id,
+                                  message_id=message_id,
+                                  text=message_text,
+                                  reply_markup=keyboard)
         except Exception as e:
-            print(f"Ошибка при редактировании сообщения: {e}")
-            # Если редактирование не удалось, отправляем новое сообщение
+            print(f"[!] Ошибка редактирования: {e}")
             bot.send_message(chat_id, message_text, reply_markup=keyboard)
     else:
         bot.send_message(chat_id, message_text, reply_markup=keyboard)
+
 
 # Обработчик инлайн-кнопок для перелистывания
 @bot.callback_query_handler(func=lambda call: call.data.startswith("teacher_page:"))
@@ -454,16 +596,8 @@ def handle_teacher_pagination(call):
     # Передаем ID сообщения для редактирования
     show_teacher_page(call.message.chat.id, page, call.message.message_id)
 
-# Обработчик выбора преподавателя (остается без изменений)
-@bot.callback_query_handler(func=lambda call: call.data.startswith("select_teacher:"))
-def handle_teacher_select(call):
-    index = int(call.data.split(":")[1])
-    teacher_name = teacher_list[index]
-    bot.answer_callback_query(call.id)
-    bot.send_message(call.message.chat.id, f"Вы выбрали преподавателя: {teacher_name}")
 
-
-# Формаирование сообщения
+# Формаирование сообщения расписания группы
 def send_schedule(message, schedule_data, group_name, day=None, edit=False, message_id=None, force_mode=None):
     from datetime import date
     from telebot import types
@@ -499,7 +633,7 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
                     subject = schedule_data['subject'][i] or '-----'
                     teacher = schedule_data['teacher'][i] or '-----'
                     classroom = schedule_data['clr'][i] or '-----'
-                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊🧑‍🏫{teacher}\n    ⌊🚪{classroom}\n"
         
         # Если режим 'short' — показываем только непустые пары
         elif mode == 'short':
@@ -508,7 +642,7 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
                     subject = schedule_data['subject'][i]
                     teacher = schedule_data['teacher'][i]
                     classroom = schedule_data['clr'][i]
-                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊👤{teacher}\n    ⌊🚪{classroom}\n"
+                    msg += f"⌚*{lesson_times[i]}:*\n    ⌊📖{subject}\n    ⌊🧑‍🏫{teacher}\n    ⌊🚪{classroom}\n"
 
         if schedule_data.get('timestamp'):
             last_updated = max(schedule_data['timestamp'])
@@ -517,11 +651,12 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
     # Кнопки
     keyboard = types.InlineKeyboardMarkup()
 
-    # Кнопка переключения режима
+    # --- Кнопка переключения режима ---
     switch_label = f"🔄 Отображение: {'Полное' if mode == 'full' else 'Краткое'}"
-    keyboard.add(types.InlineKeyboardButton(switch_label, callback_data=f"toggle_mode:{group_name}:{tday}"))
+    switch_label = f"🔄 Отображение: {'Полное' if mode == 'full' else 'Краткое'}"
+    keyboard.add(types.InlineKeyboardButton(switch_label, callback_data=f"toggle_mode_g:{group_name}:{tday}"))
 
-    # Кнопки навигации по дням
+    # --- Кнопки навигации по дням ---
     if tday == 0:
         keyboard.add(types.InlineKeyboardButton("➡️ Завтра", callback_data=f"day:{group_name}:{tday + 1}"))
     elif tday == 6 or tday == 5:
@@ -540,15 +675,178 @@ def send_schedule(message, schedule_data, group_name, day=None, edit=False, mess
                 bot.edit_message_text(chat_id=message.chat.id, message_id=message_id,
                                       text=msg, reply_markup=keyboard, parse_mode='Markdown')
         except Exception as e:
-           print(f"Ошибка редактирования сообщения: {e}")
+           print(f"[!] Ошибка редактирования сообщения: {e}")
     else:
         bot.send_message(message.chat.id, msg, reply_markup=keyboard, parse_mode='Markdown')
 
 
+# Cловарь для преобразования имени преподавателя в индекс
+teacher_to_index = {teacher: idx for idx, teacher in enumerate(teacher_list)}
+
+# Формаирование сообщения расписания преподователя
+def send_teacher_schedule(message, teacher_name, target_date=None, edit=False, message_id=None):
+    from datetime import date, timedelta
+    
+    if target_date is None:
+        target_date = date.today()
+    else:
+        if isinstance(target_date, str):
+            target_date = date.fromisoformat(target_date)
+    
+    today = date.today()
+    start_of_week = today - timedelta(days=today.weekday())
+    end_of_week = start_of_week + timedelta(days=12)
+    
+    if target_date < start_of_week:
+        target_date = start_of_week
+    elif target_date > end_of_week:
+        target_date = end_of_week
+    
+    if target_date.weekday() == 6:
+        target_date += timedelta(days=1)
+        if target_date > end_of_week:
+            target_date = end_of_week
+    
+    day_of_week = target_date.weekday()
+    days = ["Понедельник", "Вторник", "Среда", "Четверг", "Пятница", "Суббота", "Воскресенье"]
+    day_name = days[day_of_week]
+    
+    username = message.from_user.username or str(message.chat.id)
+    mode = get_user_mode(username)
+    date_str = target_date.isoformat()
+    teacher_index = teacher_to_index.get(teacher_name, 0)
+
+    conn = sqlite3.connect('teacher_schedule.db')
+    cursor = conn.cursor()
+    
+    # Получаем данные о занятиях
+    cursor.execute('''
+        SELECT subject_name, group_name, pair_start_time, pair_end_time, classroom, pair_type
+        FROM teacher_schedule
+        WHERE teacher = ? AND date = ?
+        ORDER BY pair_start_time
+    ''', (teacher_name, date_str))
+    results = cursor.fetchall()
+    
+    # Получаем время последнего обновления
+    cursor.execute('''
+        SELECT MAX(last_updated)
+        FROM teacher_schedule
+        WHERE teacher = ? AND date = ?
+    ''', (teacher_name, date_str))
+    max_update = cursor.fetchone()[0]
+    
+    conn.close()
+
+    msg = f"🗓️ _{day_name} - {teacher_name}_\n📅 _{target_date.strftime('%d.%m.%Y')}\n_"
+    
+    if not results:
+        msg += "Пар нет на этот день.\n"
+    else:
+        for row in results:
+            subject_name, group_name, start_time, end_time, classroom, pair_type = row
+            time_str = f"{start_time}-{end_time}" if start_time and end_time else "??:??-??:??"
+            
+            # Добавляем префикс типа занятия
+            prefix = ""
+            if pair_type == "практика":
+                prefix = "пр. "
+            elif pair_type == "лекция":
+                prefix = "лек. "
+            elif pair_type == "лабораторная":
+                prefix = "лаб. "
+            
+            # Форматируем название предмета
+            subject_display = f"{prefix}{subject_name}" if subject_name else "-----"
+            
+            if mode == 'full' or (mode == 'short' and subject_name and subject_name.strip() != '-----'):
+                msg += f"⌚ *{time_str}:*\n"
+                msg += f"    ⌊📖 {subject_display}\n"
+                msg += f"    ⌊👥 {group_name}\n"
+                msg += f"    ⌊🚪 {classroom}\n"
+        
+    if max_update:
+        msg += f"\n⚠️`Последнее обновление:{max_update}`"
+
+    # Остальной код без изменений...
+    keyboard = types.InlineKeyboardMarkup()
+    
+    prev_date = target_date - timedelta(days=1)
+    next_date = target_date + timedelta(days=1)
+    
+    if prev_date.weekday() == 6:
+        prev_date -= timedelta(days=1)
+    if next_date.weekday() == 6:
+        next_date += timedelta(days=1)
+    
+    show_prev = prev_date >= start_of_week
+    show_next = next_date <= end_of_week
+    
+    buttons = []
+    if show_prev:
+        buttons.append(types.InlineKeyboardButton("⬅️ Вчера", callback_data=f"t_day:{teacher_index}:{prev_date.isoformat()}"))
+    if show_next:
+        buttons.append(types.InlineKeyboardButton("Завтра ➡️", callback_data=f"t_day:{teacher_index}:{next_date.isoformat()}"))
+    
+    if buttons:
+        keyboard.row(*buttons)
+
+    if edit:
+        try:
+            bot.edit_message_text(
+                chat_id=message.chat.id,
+                message_id=message_id,
+                text=msg,
+                reply_markup=keyboard,
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            print(f"Ошибка редактирования: {e}")
+    else:
+        bot.send_message(
+            message.chat.id,
+            msg,
+            reply_markup=keyboard,
+            parse_mode='Markdown'
+        )
+
+# Обработчик выбора преподавателя
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_teacher:"))
+def handle_teacher_select(call):
+    index = int(call.data.split(":")[1])
+    teacher_name = teacher_list[index]
+    bot.answer_callback_query(call.id)
+    
+    send_teacher_schedule(
+        message=call.message,
+        teacher_name=teacher_name,
+        edit=True,
+        message_id=call.message.message_id
+    )
+
+# Обработчики для кнопок преподавателя
+@bot.callback_query_handler(func=lambda call: call.data.startswith("t_day:"))
+def handle_teacher_day_navigation(call):
+    try:
+        parts = call.data.split(":")
+        teacher_index = int(parts[1])
+        date_str = parts[2]
+        teacher_name = teacher_list[teacher_index]
+        send_teacher_schedule(
+            message=call.message,
+            teacher_name=teacher_name,
+            target_date=date_str,
+            edit=True,
+            message_id=call.message.message_id
+        )
+    except Exception as e:
+        print(f"[!] Ошибка навигации: {str(e)}")
+        bot.answer_callback_query(call.id, "Ошибка обработки запроса")
+
 # Обработать нажатия на инлайн-кнопки
 @bot.callback_query_handler(func=lambda call: call.data.startswith("day:"))
 def handle_day_navigation(call):
-    # Кнопки перелистывания дня
+    # --- Кнопки перелистывания дня ---
     try:
         _, group_name, day_str = call.data.split(":")
         day = int(day_str)
@@ -573,154 +871,238 @@ def handle_day_navigation(call):
         else:
             bot.answer_callback_query(call.id, "Нет данных на выбранный день")
     except Exception as e:
-        print(f"Ошибка в handle_day_navigation: {e}")
+        print(f"[!] Ошибка в handle_day_navigation: {e}")
         bot.answer_callback_query(call.id, "Ошибка обработки")
 
 
-# Обработка режима вывода рассписания
-@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_mode:"))
-def handle_mode_toggle(call):
+# Обработчик для групп
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_mode_g:"))
+def handle_group_mode_toggle(call):
     try:
         _, group_name, day_str = call.data.split(":")
         day = int(day_str)
         username = call.from_user.username or str(call.message.chat.id)
         new_mode = toggle_user_mode(username)
 
-        # Получаем расписание для указанного дня
         schedule_data = get_schedule_from_db(group_name, day)
-
-        # Редактируем сообщение только в случае, если режим был изменён
-        send_schedule(call.message, schedule_data, group_name, day=day, edit=True, message_id=call.message.message_id, force_mode=new_mode)
-
-        bot.answer_callback_query(call.id, f"Режим переключен на: {new_mode}")
-    except Exception as e:
-        print(f"Ошибка в handle_mode_toggle: {e}")
-        bot.answer_callback_query(call.id, "Не удалось переключить режим")
+        send_schedule(call.message, schedule_data, group_name, day=day, 
+                      edit=True, message_id=call.message.message_id, force_mode=new_mode)
         
+        bot.answer_callback_query(call.id, f"Режим: {'Полный' if new_mode == 'full' else 'Краткий'}")
+    except Exception as e:
+        print(f"[!] Ошибка переключения режима группы: {e}")
+        bot.answer_callback_query(call.id, "Ошибка переключения")
+
+# Обработчик для преподавателей
+@bot.callback_query_handler(func=lambda call: call.data.startswith("toggle_mode_t:"))
+def handle_teacher_mode_toggle(call):
+    try:
+        parts = call.data.split(":")
+        teacher_index = int(parts[1])
+        date_str = parts[2]
+        teacher_name = teacher_list[teacher_index]
+        username = call.from_user.username or str(call.message.chat.id)
+        new_mode = toggle_user_mode(username)
+        
+        send_teacher_schedule(
+            message=call.message,
+            teacher_name=teacher_name,
+            target_date=date_str,
+            edit=True,
+            message_id=call.message.message_id
+        )
+        bot.answer_callback_query(call.id, f"Режим: {'Полный' if new_mode == 'full' else 'Краткий'}")
+    except Exception as e:
+        print(f"[!] Ошибка переключения режима преподавателя: {e}")
+        bot.answer_callback_query(call.id, "Ошибка переключения")
+
+# Обработчик выбора преподавателя по имени
+@bot.callback_query_handler(func=lambda call: call.data.startswith("select_teacher_by_name:"))
+def handle_teacher_select_by_name(call):
+    teacher_name = call.data.split(":", 1)[1]
+    bot.answer_callback_query(call.id)
+    
+    send_teacher_schedule(
+        message=call.message,
+        teacher_name=teacher_name,
+        edit=True,
+        message_id=call.message.message_id
+    )
+    
 
 # Команда /start
 @bot.message_handler(commands=['start'])
 def button_message(message):
+    username = message.from_user.username or str(message.chat.id)
+    set_user_search_mode(username, 'group')  # Сбрасываем режим поиска
+    
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     c1 = types.KeyboardButton("Курс 1")
     c2 = types.KeyboardButton("Курс 2")
     c3 = types.KeyboardButton("Курс 3")
     c4 = types.KeyboardButton("Курс 4")
     t_search = types.KeyboardButton("Поиск по преподавателю")
-
+    
     markup.add(c1, c2)
     markup.add(c3, c4)
     markup.add(t_search)
     bot.send_message(message.chat.id, 'Выбери курс\nЧтобы вернуться на главную - отправь /start', reply_markup=markup)
 
 # Обработка сообщений
+def set_user_mode(username, mode):
+    conn = sqlite3.connect('user_settings.db')
+    cursor = conn.cursor()
+    cursor.execute('REPLACE INTO user_settings (username, mode) VALUES (?, ?)', (username, mode))
+    conn.commit()
+    conn.close()
+
 @bot.message_handler(content_types='text')
 def message_reply(message):
-    user_input = message.text.strip().lower()
+    user_input = message.text.strip()
+    user_input_lower = user_input.lower()
+    username = message.from_user.username or str(message.chat.id)
+    mode = get_user_mode(username)
+    search_mode = get_user_search_mode(username)
+    day = date.today().weekday()
 
-    # Если сообщение "вернуться на главную", вызываем тот же обработчик, что и для команды /start
-    if user_input == "вернуться на главную":
-        button_message(message)
-    else:
+    # --- Возврат на главную ---
+    if user_input_lower == "вернуться на главную":
+        set_user_search_mode(username, 'group')  # Переключаем на режим поиска по группам
+        # Убираем текущую клавиатуру и показываем главное меню
+        bot.send_message(message.chat.id, "Возвращаемся на главную...", reply_markup=types.ReplyKeyboardRemove())
+        button_message(message)  # Показываем главное меню с исходной клавиатурой
+        return
 
-        group_input = message.text.strip()
+    # --- Переключение в режим поиска по преподавателям ---
+    if user_input_lower == "поиск по преподавателю":
+        set_user_search_mode(username, 'teacher')  # Переключаем на режим поиска преподавателей
+        # Убираем текущую клавиатуру и устанавливаем клавиатуру для выбора преподавателей
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(types.KeyboardButton("Вернуться на главную"))
+        # Показываем список преподавателей
+        show_teacher_page(message.chat.id, page=0)
+        bot.send_message(message.chat.id, "Выберите преподавателя или введите ФИО вручную", reply_markup=markup)
+        return
 
-        username = message.from_user.username or str(message.chat.id)
-        mode = get_user_mode(username)
-        day = date.today().weekday()
-
-        # Обработка кнопок курсов
-        if user_input in ["курс 1", "курс1"]:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(*[types.KeyboardButton(name) for name in [
-                "02121-ДБ", 
-                "02122-ДБ", 
-                "02123-ДБ", 
-                "02141-ДБ",
-                "02161-ДБ", 
-                "02162-ДБ", 
-                "02171-ДБ", 
-                "02172-ДБ", 
-                "02181-ДБ"
-           ]])
-            markup.add(types.KeyboardButton("Вернуться на главную"))
-            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-
-        elif user_input in ["курс 2", "курс2"]:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(*[types.KeyboardButton(name) for name in [
-                "02221-ДБ", 
-                "02222-ДБ", 
-                "02223-ДБ", 
-                "02241-ДБ",
-                "02261-ДБ",
-                "02262-ДБ", 
-                "02271-ДБ", 
-                "02272-ДБ", 
-                "02281-ДБ"
-            ]])
-            markup.add(types.KeyboardButton("Вернуться на главную"))
-            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-
-        elif user_input in ["курс 3", "курс3"]:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(*[types.KeyboardButton(name) for name in [
-                "02321-ДБ", 
-                "02322-ДБ", 
-                "02323-ДБ", 
-                "02341-ДБ",
-                "02361-ДБ", 
-                "02362-ДБ", 
-                "02371-ДБ", 
-                "02381-ДБ"
-            ]])
-            markup.add(types.KeyboardButton("Вернуться на главную"))
-            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-
-        elif user_input in ["курс 4", "курс4"]:
-            markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-            markup.add(*[types.KeyboardButton(name) for name in [
-                "02421-ДБ", 
-                "02422-ДБ", 
-                "02441-ДБ", 
-                "02461-ДБ",
-                "02471-ДБ", 
-                "02481-ДБ"
-            ]])
-            markup.add(types.KeyboardButton("Вернуться на главную"))
-            bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
-
-        elif user_input == "поиск по преподавателю":
-            show_teacher_page(message.chat.id, page=0)
-
-
-        # Обработка ввода по краткому номеру группы
-        elif group_input in short_group_map:
-            full_name, url_num = short_group_map[group_input]
-            schedule_data = get_schedule(full_name, url_num)
-            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
-                          full_name, day=day, force_mode=mode)
-
-        # Обработка ввода по полному названию группы
+    # --- Режим преподавателя ---
+    if search_mode == 'teacher':
+        # Исправленный вызов без параметра day
+        if user_input in teacher_map:
+            send_teacher_schedule(message=message, teacher_name=user_input)
         else:
-            input_upper = group_input.strip().upper()
-            found = False
-            for short, (full, url) in short_group_map.items():
-                if input_upper == full.upper():
-                    schedule_data = get_schedule(full, url)
-                    send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
-                                  full, day=day, force_mode=mode)
-                    found = True
-                    break
+            # Добавим поиск по частичному совпадению
+            found_teachers = [t for t in teacher_map if user_input.lower() in t.lower()]
+            
+            if len(found_teachers) == 1:
+                send_teacher_schedule(message=message, teacher_name=found_teachers[0])
+            elif len(found_teachers) > 1:
+                # Предложим выбор из нескольких преподавателей
+                keyboard = types.InlineKeyboardMarkup(row_width=1)
+                for teacher in found_teachers:
+                    keyboard.add(types.InlineKeyboardButton(teacher, callback_data=f"select_teacher_by_name:{teacher}"))
+                
+                bot.send_message(
+                    message.chat.id,
+                    "Найдено несколько преподавателей. Выберите нужного:",
+                    reply_markup=keyboard
+                )
+            else:
+                bot.send_message(message.chat.id, "Преподаватель не найден. Попробуйте выбрать из списка или введите ФИО точно.")
+        return
 
-            if not found:
-                bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
+    # --- Режим поиска по группам ---
+    group_input = user_input.strip()
 
-        print(f"{datetime.now().time()} - Запрос от: {message.from_user.username}")
-    
-        pass
+    # --- Обработка курсов ---
+    if user_input_lower in ["курс 1", "курс1"]:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(*[types.KeyboardButton(name) for name in [
+            "02121-ДБ",
+            "02122-ДБ",
+            "02123-ДБ",
+            "02141-ДБ",
+            "02161-ДБ",
+            "02162-ДБ",
+            "02171-ДБ",
+            "02172-ДБ",
+            "02181-ДБ"
+        ]])
+        markup.add(types.KeyboardButton("Вернуться на главную"))
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+        return
+
+    elif user_input_lower in ["курс 2", "курс2"]:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(*[types.KeyboardButton(name) for name in [
+            "02221-ДБ",
+            "02222-ДБ",
+            "02223-ДБ",
+            "02241-ДБ",
+            "02261-ДБ",
+            "02262-ДБ",
+            "02271-ДБ",
+            "02272-ДБ",
+            "02281-ДБ"
+        ]])
+        markup.add(types.KeyboardButton("Вернуться на главную"))
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+        return
+
+    elif user_input_lower in ["курс 3", "курс3"]:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(*[types.KeyboardButton(name) for name in [
+            "02321-ДБ",
+            "02322-ДБ",
+            "02323-ДБ",
+            "02341-ДБ",
+            "02361-ДБ",
+            "02362-ДБ",
+            "02371-ДБ",
+            "02381-ДБ"
+        ]])
+        markup.add(types.KeyboardButton("Вернуться на главную"))
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+        return
+
+    elif user_input_lower in ["курс 4", "курс4"]:
+        markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+        markup.add(*[types.KeyboardButton(name) for name in [
+            "02421-ДБ",
+            "02422-ДБ",
+            "02441-ДБ",
+            "02461-ДБ",
+            "02471-ДБ",
+            "02481-ДБ"
+        ]])
+        markup.add(types.KeyboardButton("Вернуться на главную"))
+        bot.send_message(message.chat.id, 'Выбери группу', reply_markup=markup)
+        return
+
+    # --- Поиск по краткому номеру группы ---
+    if group_input in short_group_map:
+        full_name, url_num = short_group_map[group_input]
+        schedule_data = get_schedule(full_name, url_num)
+        send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
+                      full_name, day=day, force_mode=mode)
+        return
+
+    # --- Поиск по полному названию группы ---
+    input_upper = group_input.upper()
+    for short, (full, url) in short_group_map.items():
+        if input_upper == full.upper():
+            schedule_data = get_schedule(full, url)
+            send_schedule(message, schedule_data or {'subject': [], 'teacher': [], 'clr': [], 'timestamp': []},
+                          full, day=day, force_mode=mode)
+            return
+
+    # --- Если ничего не найдено ---
+    bot.send_message(message.chat.id, "Группа не найдена. Попробуйте ещё раз или выберите курс.")
+    print(f"{datetime.now().time()} - Запрос от: {message.from_user.username}")
 
 
-init_user_settings_db()
+
 init_db()
+init_user_settings_db()
+init_teacher_db()
+
 bot.infinity_polling()
