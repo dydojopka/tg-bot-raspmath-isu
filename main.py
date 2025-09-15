@@ -1,8 +1,8 @@
 from dotenv import load_dotenv
 import os
-from bs4 import BeautifulSoup
-from selenium import webdriver
-from webdriver_manager.chrome import ChromeDriverManager
+# from bs4 import BeautifulSoup
+# from selenium import webdriver
+# from webdriver_manager.chrome import ChromeDriverManager
 from datetime import date, datetime, timedelta
 import telebot
 from telebot import types
@@ -25,17 +25,17 @@ if not TOKEN:
 bot = telebot.TeleBot(TOKEN)
 
 
-# Инициализация драйвера Chrome
-ChromeDriverManager().install()
-chrome_options = webdriver.ChromeOptions()
-chrome_options.add_argument("--headless")
-chrome_options.add_argument("--disable-gpu")
-chrome_options.add_argument("--no-sandbox")
-chrome_options.add_argument("--disable-dev-shm-usage")
-driver = webdriver.Chrome(options=chrome_options)
+# # Инициализация драйвера Chrome
+# ChromeDriverManager().install()
+# chrome_options = webdriver.ChromeOptions()
+# chrome_options.add_argument("--headless")
+# chrome_options.add_argument("--disable-gpu")
+# chrome_options.add_argument("--no-sandbox")
+# chrome_options.add_argument("--disable-dev-shm-usage")
+# driver = webdriver.Chrome(options=chrome_options)
 
-# Блокировка для безопасной работы с драйвером в потоках
-driver_lock = threading.Lock()
+# # Блокировка для безопасной работы с драйвером в потоках
+# driver_lock = threading.Lock()
 
 # Словарь для кратких номеров групп: {краткий_номер: (полное_название, url_num)}
 short_group_map = {
@@ -280,68 +280,68 @@ def get_schedule_from_db(group_name, day):
     finally:
         conn.close()
 
-# Функция парсинга с сохранением в базу данных
-def parse_and_save_schedule(url_num, group_name):
-    data = {
-        'subject': [],
-        'teacher': [],
-        'clr': [],
-    }
-    top_week = True
+# # Функция парсинга с сохранением в базу данных
+# def parse_and_save_schedule(url_num, group_name):
+#     data = {
+#         'subject': [],
+#         'teacher': [],
+#         'clr': [],
+#     }
+#     top_week = True
 
-    try:
-        with driver_lock:
-            driver.get(f"https://raspmath.isu.ru/schedule/{url_num}")
-            soup = BeautifulSoup(driver.page_source, 'lxml')
+#     try:
+#         with driver_lock:
+#             driver.get(f"https://raspmath.isu.ru/schedule/{url_num}")
+#             soup = BeautifulSoup(driver.page_source, 'lxml')
 
-        # Определение текущей недели
-        active_li = soup.find('li', class_='active mr-3')
-        if active_li and active_li.find('a', class_="btn btn-primary2 top-week active"):
-            top_week = True
-            week_type = 'top'
-        else:
-            top_week = False
-            week_type = 'bottom'
+#         # Определение текущей недели
+#         active_li = soup.find('li', class_='active mr-3')
+#         if active_li and active_li.find('a', class_="btn btn-primary2 top-week active"):
+#             top_week = True
+#             week_type = 'top'
+#         else:
+#             top_week = False
+#             week_type = 'bottom'
 
-        tbody = soup.find('tbody')
-        if not tbody:
-            print(f"Не найдено расписание для группы: {group_name}")
-            return None
+#         tbody = soup.find('tbody')
+#         if not tbody:
+#             print(f"Не найдено расписание для группы: {group_name}")
+#             return None
 
-        if top_week:
-            td_list = tbody.find_all('td', class_='td1')
-        else:
-            td_list = tbody.find_all('td', class_='td2')
+#         if top_week:
+#             td_list = tbody.find_all('td', class_='td1')
+#         else:
+#             td_list = tbody.find_all('td', class_='td2')
 
-        for td in td_list:
-            if len(td) == 0:
-                data['subject'].append('-----')
-                data['teacher'].append('-----')
-                data['clr'].append('-----')
-            else:
-                if td.find('p', class_='nameHoliday h5 text-center'): 
-                    data['subject'].append('-----')
-                    data['teacher'].append('-----')
-                    data['clr'].append('-----')
-                else:
-                    subject_el = td.find('div', class_='nameSubject')
-                    subject = subject_el.text.strip() if subject_el else '-----'
-                    data['subject'].append(subject)
+#         for td in td_list:
+#             if len(td) == 0:
+#                 data['subject'].append('-----')
+#                 data['teacher'].append('-----')
+#                 data['clr'].append('-----')
+#             else:
+#                 if td.find('p', class_='nameHoliday h5 text-center'): 
+#                     data['subject'].append('-----')
+#                     data['teacher'].append('-----')
+#                     data['clr'].append('-----')
+#                 else:
+#                     subject_el = td.find('div', class_='nameSubject')
+#                     subject = subject_el.text.strip() if subject_el else '-----'
+#                     data['subject'].append(subject)
                     
-                    teacher_el = td.find('div', class_='teacher sch-mt-1')
-                    teacher = teacher_el.text.strip() if teacher_el else '-----'
-                    data['teacher'].append(teacher)
+#                     teacher_el = td.find('div', class_='teacher sch-mt-1')
+#                     teacher = teacher_el.text.strip() if teacher_el else '-----'
+#                     data['teacher'].append(teacher)
                     
-                    clr_el = td.find('div', class_='classroom sch-mt-1')
-                    classroom = clr_el.text.strip() if clr_el else '-----'
-                    data['clr'].append(classroom)
+#                     clr_el = td.find('div', class_='classroom sch-mt-1')
+#                     classroom = clr_el.text.strip() if clr_el else '-----'
+#                     data['clr'].append(classroom)
 
-        # Сохраняем в базу данных
-        save_schedule_to_db(group_name, week_type, data)
-        return data
-    except Exception as e:
-        print(f"[!] Ошибка при парсинге для {group_name}: {e.msg}")
-        return None
+#         # Сохраняем в базу данных
+#         save_schedule_to_db(group_name, week_type, data)
+#         return data
+#     except Exception as e:
+#         print(f"[!] Ошибка при парсинге для {group_name}: {e.msg}")
+#         return None
     
 # Функция для получения расписания (из базы или парсинга)
 def get_schedule(group_name, url_num):
@@ -351,7 +351,9 @@ def get_schedule(group_name, url_num):
 
     schedule_data = get_schedule_from_db(group_name, day)
     if not schedule_data:
-        schedule_data = parse_and_save_schedule(url_num, group_name)
+        week_dates = get_week_date_range()
+        fetch_and_save_group_schedule(group_name, week_dates)
+        schedule_data = get_schedule_from_db(group_name, day)
 
     return schedule_data
 
@@ -440,6 +442,63 @@ def init_teacher_db():
     conn.commit()
     conn.close()
 
+# Функция запроса и записи расписания групп
+def fetch_and_save_group_schedule(group_name, target_dates):
+    url = "https://raspmath.isu.ru/getScheduleForTest"
+    headers = {"x-access-token": API_TOKEN}
+
+    conn = sqlite3.connect("schedule.db")
+    cursor = conn.cursor()
+
+    # Удаляем старые записи для группы
+    cursor.execute("DELETE FROM schedule WHERE group_name = ?", (group_name,))
+    conn.commit()
+
+    for target_date in target_dates:
+        payload = {
+            "date": target_date,
+            "group": group_name,
+            "teacher": ""
+        }
+
+        try:
+            response = requests.post(url, headers=headers, json=payload)
+            data = response.json()
+
+            for row in data:
+                weekday = row.get("weekday")
+                day = ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"].index(weekday) if weekday in ["Понедельник","Вторник","Среда","Четверг","Пятница","Суббота"] else None
+                if day is None:
+                    continue
+
+                # Определяем номер пары
+                lesson_number = {
+                    "8.30": 0, "10.10": 1, "11.50": 2,
+                    "13.50": 3, "15.30": 4, "17.10": 5, "18.50": 6
+                }.get(row.get("pair_start_time"), None)
+
+                cursor.execute('''
+                    INSERT OR REPLACE INTO schedule
+                    (group_name, week_type, day, lesson_number, subject, teacher, classroom, timestamp)
+                    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+                ''', (
+                    row.get("group_name"),
+                    row.get("week_type") or "",
+                    day,
+                    lesson_number if lesson_number is not None else -1,
+                    row.get("subject_name"),
+                    row.get("teacher"),
+                    row.get("class_name"),
+                    datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+                ))
+
+            conn.commit()
+        except Exception as e:
+            print(f"[!] Ошибка при запросе расписания для группы {group_name} на дату {target_date}: {str(e)}")
+
+    conn.close()
+
+
 # Функция запроса и записи расписания преподавателя
 def fetch_and_save_teacher_schedule(teacher_name, target_dates):
     url = "https://raspmath.isu.ru/getScheduleForTest"
@@ -515,11 +574,12 @@ def update_database():
         print(f"{datetime.now()} - Начало обновления базы данных...")
 
         # --- Обновление расписания групп ---
-        for group_short, (group_name, url_num) in short_group_map.items():
+        week_dates = get_week_date_range()
+        for group_short, (group_name, _) in short_group_map.items():
             try:
                 print(f"{datetime.now().time()} - Обновление для группы: {group_name}")
-                parse_and_save_schedule(url_num, group_name)
-                time.sleep(2)  # Пауза между запросами
+                fetch_and_save_group_schedule(group_name, week_dates)
+                time.sleep(0.5)  # Пауза между запросами
             except Exception as e:
                 print(f"[!] Ошибка при обновлении группы {group_name}: {str(e)}")
         print(f"{datetime.now()} - Обновление бд расписания групп завершено")
@@ -530,19 +590,19 @@ def update_database():
         # Получаем все даты для текущей и следующей недели
         week_dates = get_week_date_range()
 
-        # Для каждого преподавателя обновляем расписание на эти даты
         for teacher in teacher_map:
             try:
                 print(f"{datetime.now().time()} - Обновление для преподавателя: {teacher}")
-                fetch_and_save_teacher_schedule(teacher, week_dates)  # Получаем расписание для всех дат
-                time.sleep(0.5)  # Защита от перегрузки API
+                fetch_and_save_teacher_schedule(teacher, week_dates)
+                time.sleep(0.5)
             except Exception as e:
                 print(f"[!] Ошибка при обновлении расписания для преподавателя {teacher}: {str(e)}")
 
         print(f"{datetime.now()} - Обновление бд расписания преподавателей завершено")
 
         time.sleep(21600)  # Раз в 6 часов
-        
+
+
 # Запуск фонового потока для обновления базы
 update_thread = threading.Thread(target=update_database, daemon=True)
 update_thread.start()
