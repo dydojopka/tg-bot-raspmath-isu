@@ -1,0 +1,7 @@
+course: Учебные практики
+sections:
+  - number: 1
+    title: Учебная практика
+assignment:
+  number: 1
+  title: Telegram Bot для расписания ИМИТ ИГУ
